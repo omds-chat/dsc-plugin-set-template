@@ -6,10 +6,12 @@
  * 作者裸公钥分离签名与验签、证书信息读取与证书链校验,全部交给 openssl 完成。
  *
  * 约定见 .agents/signing-conventions.md:
- * - 根 CA 密钥 Ed25519,自签名,keyUsage=keyCertSign,cRLSign,basicConstraints=CA:TRUE,pathlen:0
+ * - 根 CA 密钥 ECDSA P-256,自签名,keyUsage=keyCertSign,cRLSign,basicConstraints=CA:TRUE,pathlen:0
+ *   (浏览器 WebCrypto 对 P-256 支持最广;证书链校验要在浏览器里做,Ed25519 在目标浏览器下限不可用)
  * - EEC 密钥 ECDSA P-256;OpenSSL 的 CMS 实现对 Ed25519 报 provider signature failure,不可用
  * - EEC 证书 keyUsage=critical,digitalSignature,basicConstraints=critical,CA:FALSE
- * - 合集签名 openssl cms -sign -binary -nocerts -noattr,产出逐字节语义的 CMS 分离签名
+ * - 合集签名 openssl cms -sign -binary -outform DER -nocerts -noattr,产出逐字节语义的 DER 格式 CMS 分离签名
+ *   DER 是跨仓库统一格式:默认的 S/MIME multipart/signed 包装浏览器无法解析,插件市场要在浏览器里验签
  * - 作者签名 openssl pkeyutl -sign -rawin(Ed25519),产出裸公钥分离签名
  */
 import { execFileSync } from 'node:child_process'
@@ -164,7 +166,9 @@ export function resolveKeyFile(source, label = '私钥') {
 }
 
 /**
- * 生成自签名根 CA。Ed25519 私钥 + X.509 自签名证书。
+ * 生成自签名根 CA。ECDSA P-256 私钥 + X.509 自签名证书。
+ * 固定 P-256:浏览器 WebCrypto 对 P-256 支持最广,证书链校验要在浏览器里做,
+ * Ed25519 在目标浏览器下限不可用,因此根 CA 不能改用 Ed25519。
  * @param {string} dir 输出目录
  * @param {object} [options] org、name、days、keyFile、certFile
  * @returns {{keyPath: string, certPath: string}}
@@ -178,7 +182,7 @@ export function genRootCa(dir, options = {}) {
   const certPath = resolve(dir, options.certFile || ROOT_CA_FILE)
   ensureDirFor(keyPath)
   ensureDirFor(certPath)
-  run(['genpkey', '-algorithm', 'ed25519', '-out', keyPath])
+  run(['genpkey', '-algorithm', 'EC', '-pkeyopt', 'ec_paramgen_curve:P-256', '-out', keyPath])
   requireOutput(keyPath, '根私钥')
   run([
     'req', '-x509', '-new', '-key', keyPath, '-days', days, '-out', certPath,
@@ -261,6 +265,8 @@ export function issueEec(csrPath, rootCertPath, rootKeyPath, outPath, options = 
  * 用 EEC 对文件生成 CMS 分离签名,输出到 <文件>.sig。
  * 固定加 -binary:签名与验签都按原始字节处理,不经换行规范化,
  * 与作者裸公钥签名(pkeyutl -rawin)的逐字节语义保持一致。
+ * 固定加 -outform DER:默认的 S/MIME multipart/signed 包装浏览器无法解析,
+ * 而插件市场要在浏览器里验签,因此 DER 是跨仓库统一格式,验签方必须带 -inform DER。
  * @param {string} filePath 待签名文件
  * @param {string} eecCertPath EEC 证书
  * @param {string} eecKeyPath EEC 私钥
@@ -274,12 +280,13 @@ export function signFileCms(filePath, eecCertPath, eecKeyPath, options = {}) {
   requireFile(eecKeyPath, 'EEC 私钥')
   const sigPath = options.out || cmsSignaturePath(filePath)
   ensureDirFor(sigPath)
-  run(['cms', '-sign', '-binary', '-in', filePath, '-out', sigPath, '-signer', eecCertPath, '-inkey', eecKeyPath, '-nocerts', '-noattr'])
+  run(['cms', '-sign', '-binary', '-outform', 'DER', '-in', filePath, '-out', sigPath, '-signer', eecCertPath, '-inkey', eecKeyPath, '-nocerts', '-noattr'])
   return requireOutput(sigPath, 'CMS 签名')
 }
 
 /**
- * 校验 CMS 分离签名。EEC 证书只作为候选签名者证书传入 -certfile,信任锚是根证书。
+ * 校验 CMS 分离签名。签名产物是 DER 格式,因此固定带 -inform DER;
+ * EEC 证书只作为候选签名者证书传入 -certfile,信任锚是根证书。
  * 任何一步失败都不抛错,统一返回 { ok, reason },便于一次性汇总全部问题。
  * @param {string} filePath 被签名文件
  * @param {string} sigPath 签名文件
@@ -293,7 +300,7 @@ export function verifyFileCms(filePath, sigPath, rootCertPath, eecCertPath) {
   if (!existsSync(rootCertPath)) return { ok: false, reason: '根证书不存在:' + rootCertPath }
   if (!existsSync(eecCertPath)) return { ok: false, reason: 'EEC 证书不存在:' + eecCertPath }
   const result = run(
-    ['cms', '-verify', '-binary', '-in', sigPath, '-content', filePath, '-CAfile', rootCertPath, '-certfile', eecCertPath],
+    ['cms', '-verify', '-binary', '-inform', 'DER', '-in', sigPath, '-content', filePath, '-CAfile', rootCertPath, '-certfile', eecCertPath],
     { allowFailure: true },
   )
   if (result.ok) return { ok: true, reason: null }

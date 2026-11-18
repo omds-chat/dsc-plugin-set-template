@@ -80,10 +80,10 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collec
 
 | Item | Convention |
 |:---:|:---:|
-| Root CA key | Ed25519, native OpenSSL PEM; self-signed certificate with `keyUsage=critical,keyCertSign,cRLSign`,`basicConstraints=critical,CA:TRUE,pathlen:0`, valid for 3650 days |
+| Root CA key | ECDSA P-256, native OpenSSL PEM; self-signed certificate with `keyUsage=critical,keyCertSign,cRLSign`,`basicConstraints=critical,CA:TRUE,pathlen:0`, valid for 3650 days. WebCrypto support for P-256 is the broadest, certificate chain validation happens in the browser, and Ed25519 is unavailable on the target browser floor |
 | EEC key | ECDSA P-256, native OpenSSL PEM. The CMS implementation of OpenSSL reports `provider signature failure` for Ed25519, so Ed25519 cannot be used here |
 | EEC certificate | Issued by the root CA, `keyUsage=critical,digitalSignature`,`basicConstraints=critical,CA:FALSE`, valid for 365 days |
-| Collection signature | Detached CMS signature, `openssl cms -sign -binary -nocerts -noattr`, stored as `<file>.sig`. Both signing and verification pass `-binary`, so raw bytes are signed without line-ending canonicalisation |
+| Collection signature | Detached CMS signature, `openssl cms -sign -binary -outform DER -nocerts -noattr`, stored as `<file>.sig`. Both signing and verification pass `-binary`, so raw bytes are signed without line-ending canonicalisation. The artifact is always DER and verification passes `-inform DER`. DER is the cross-repository format: browsers cannot parse the default S/MIME `multipart/signed` wrapper, and the plugin market verifies signatures in the browser |
 | Author signature | Detached bare public key signature, `openssl pkeyutl -sign -rawin` (Ed25519), stored as `<file>.author.sig` |
 
 ### Commands
@@ -91,7 +91,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collec
 Root CA (offline, only in the organisation signing environment):
 
 ```bash
-openssl genpkey -algorithm ed25519 -out root_secret.pem
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out root_secret.pem
 openssl req -x509 -new -key root_secret.pem -days 3650 -out root_ca.crt \
   -subj '/O=omdsc-dev/CN=omdsc-dev Root CA' \
   -addext 'keyUsage=critical,keyCertSign,cRLSign' \
@@ -109,9 +109,11 @@ openssl x509 -req -in eec.csr -CA root_ca.crt -CAkey root_secret.pem -CAcreatese
 Collection signing and verification:
 
 ```bash
-openssl cms -sign -binary -in meta.json -out meta.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
-openssl cms -verify -binary -in meta.json.sig -content meta.json -CAfile root_ca.crt -certfile eec.pem
+openssl cms -sign -binary -outform DER -in meta.json -out meta.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
+openssl cms -verify -binary -inform DER -in meta.json.sig -content meta.json -CAfile root_ca.crt -certfile eec.pem
 ```
+
+`-outform DER` is not optional. The default output is an S/MIME `multipart/signed` wrapper, which browsers cannot parse, and the plugin market verifies signatures in the browser. DER is therefore the cross-repository format: signers always pass `-outform DER` and verifiers always pass `-inform DER`, and either side falling back to the default format breaks verification. Confirm the artifact with `openssl asn1parse -inform DER -in meta.json.sig`.
 
 Author signing and verification:
 
@@ -122,7 +124,7 @@ openssl pkeyutl -sign -rawin -inkey author_secret.pem -in plugin.js -out plugin.
 openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfile plugin.js.author.sig
 ```
 
-Add `-CRLfile crl.pem -crl_check` to enable revocation checking.
+To enable revocation checking, concatenate the root certificate and the CRL into a single `-CAfile` and add `-crl_check`: `cat root_ca.crt crl.pem > ca_with_crl.pem`, then verify with `-CAfile ca_with_crl.pem -crl_check`. The `cms` subcommand in OpenSSL 3.5 has no `-CRLfile` option, so the CRL can only travel inside `-CAfile`.
 
 ### Distribution layout
 
@@ -158,7 +160,7 @@ The old `plugin_secret.pub` and `plugin_set_sign.json` are gone. A collection is
 | 1 | `eec.pem` exists in the root, chains to the given root certificate (`--root-ca` or `ROOT_CA_PATH`), is not expired, has `digitalSignature` in `keyUsage` and is not a CA |
 | 2 | Every plugin in `datalog.json` appears in `plugins/<author>/plugin_manifest.json` and its plugin directory exists |
 | 3 | Every plugin directory has `versions.json` and `latest` is present in `versions` |
-| 4 | Every version directory has `meta.json`, `meta.json.sig`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -CAfile <root> -certfile eec.pem`; a failure is an error |
+| 4 | Every version directory has `meta.json`, `meta.json.sig`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -inform DER -CAfile <root> -certfile eec.pem`; a failure is an error |
 | 5 | When `<file>.author.sig` exists, `plugins/<author>/author_pub.pem` must exist and the signature must verify with `openssl pkeyutl -verify`; a failure is an error |
 | 6 | When `tags.json` exists, every `tag` in `datalog.json` comes from it |
 
@@ -172,7 +174,7 @@ Verification has two levels. The scripts here are a strict pre-release gate and 
 
 | Function | Description |
 |:---:|:---:|
-| `genRootCa(dir)` | Generate an Ed25519 root key and a self-signed root certificate, returns `{ keyPath, certPath }` |
+| `genRootCa(dir)` | Generate an ECDSA P-256 root key and a self-signed root certificate, returns `{ keyPath, certPath }` |
 | `genEecKey(dir)` | Generate an ECDSA P-256 EEC private key |
 | `genCsr(dir, commonName, org)` | Generate a CSR from an existing EEC private key |
 | `issueEec(csr, rootCrt, rootKey, out)` | Issue the EEC certificate, passing extensions through a temporary `--extfile` |

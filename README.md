@@ -80,10 +80,10 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<合集
 
 | 项 | 约定 |
 |:---:|:---:|
-| 根 CA 密钥 | Ed25519,OpenSSL 原生 PEM;自签名证书 `keyUsage=critical,keyCertSign,cRLSign`,`basicConstraints=critical,CA:TRUE,pathlen:0`,有效期 3650 天 |
+| 根 CA 密钥 | ECDSA P-256,OpenSSL 原生 PEM;自签名证书 `keyUsage=critical,keyCertSign,cRLSign`,`basicConstraints=critical,CA:TRUE,pathlen:0`,有效期 3650 天。浏览器 WebCrypto 对 P-256 支持最广,证书链校验要在浏览器里做,Ed25519 在目标浏览器下限不可用 |
 | EEC 密钥 | ECDSA P-256,OpenSSL 原生 PEM。OpenSSL 的 CMS 实现对 Ed25519 报 `provider signature failure`,实测不可用 |
 | EEC 证书 | 由根 CA 签发,`keyUsage=critical,digitalSignature`,`basicConstraints=critical,CA:FALSE`,有效期 365 天 |
-| 合集签名 | CMS 分离签名,`openssl cms -sign -binary -nocerts -noattr`,产物为 `<文件>.sig`。签名与验签都带 `-binary`,按原始字节处理,不经换行规范化 |
+| 合集签名 | CMS 分离签名,`openssl cms -sign -binary -outform DER -nocerts -noattr`,产物为 `<文件>.sig`。签名与验签都带 `-binary`,按原始字节处理,不经换行规范化;产物固定为 DER,验签带 `-inform DER`。DER 是跨仓库统一格式:默认的 S/MIME `multipart/signed` 包装浏览器无法解析,而插件市场要在浏览器里验签 |
 | 作者签名 | 裸公钥分离签名,`openssl pkeyutl -sign -rawin`(Ed25519),产物为 `<文件>.author.sig` |
 
 ### 命令
@@ -91,7 +91,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<合集
 根 CA(离线,只在组织签名环境执行):
 
 ```bash
-openssl genpkey -algorithm ed25519 -out root_secret.pem
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out root_secret.pem
 openssl req -x509 -new -key root_secret.pem -days 3650 -out root_ca.crt \
   -subj '/O=omdsc-dev/CN=omdsc-dev Root CA' \
   -addext 'keyUsage=critical,keyCertSign,cRLSign' \
@@ -109,9 +109,11 @@ openssl x509 -req -in eec.csr -CA root_ca.crt -CAkey root_secret.pem -CAcreatese
 合集签名与验签:
 
 ```bash
-openssl cms -sign -binary -in meta.json -out meta.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
-openssl cms -verify -binary -in meta.json.sig -content meta.json -CAfile root_ca.crt -certfile eec.pem
+openssl cms -sign -binary -outform DER -in meta.json -out meta.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
+openssl cms -verify -binary -inform DER -in meta.json.sig -content meta.json -CAfile root_ca.crt -certfile eec.pem
 ```
+
+`-outform DER` 不可省略。默认输出是 S/MIME `multipart/signed` 包装,浏览器无法解析,而插件市场要在浏览器里验签,所以 DER 是跨仓库统一格式:签名方固定 `-outform DER`,验签方固定 `-inform DER`,任何一方改用默认格式都会验签失败。产物可用 `openssl asn1parse -inform DER -in meta.json.sig` 确认为 DER。
 
 作者签名与验签:
 
@@ -122,7 +124,7 @@ openssl pkeyutl -sign -rawin -inkey author_secret.pem -in plugin.js -out plugin.
 openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfile plugin.js.author.sig
 ```
 
-启用吊销检查时追加 `-CRLfile crl.pem -crl_check`。
+启用吊销检查时,把根证书与 CRL 拼进同一个 `-CAfile` 再追加 `-crl_check`:`cat root_ca.crt crl.pem > ca_with_crl.pem`,验签时用 `-CAfile ca_with_crl.pem -crl_check`。OpenSSL 3.5 的 `cms` 子命令没有 `-CRLfile` 选项,CRL 只能随 `-CAfile` 一起传入。
 
 ### 分发结构
 
@@ -158,7 +160,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | 1 | 根目录 `eec.pem` 存在,由给定根证书签发(`--root-ca` 或 `ROOT_CA_PATH`),未过期,`keyUsage` 含 `digitalSignature`,`basicConstraints` 非 CA |
 | 2 | `datalog.json` 中的每个插件都在 `plugins/<author>/plugin_manifest.json` 中出现,且插件目录存在 |
 | 3 | 每个插件目录有 `versions.json`,`latest` 必须在 `versions` 列表内 |
-| 4 | 每个版本目录有 `meta.json`、`meta.json.sig`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -CAfile <根证书> -certfile eec.pem` 验签,失败即报错 |
+| 4 | 每个版本目录有 `meta.json`、`meta.json.sig`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -inform DER -CAfile <根证书> -certfile eec.pem` 验签,失败即报错 |
 | 5 | 若存在 `<文件>.author.sig`,则 `plugins/<author>/author_pub.pem` 必须存在,并用 `openssl pkeyutl -verify` 验证,失败即报错 |
 | 6 | `tags.json` 存在时,`datalog.json` 的 `tag` 必须取自其中 |
 
@@ -172,7 +174,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 | 函数 | 说明 |
 |:---:|:---:|
-| `genRootCa(dir)` | 生成 Ed25519 根私钥与自签名根证书,返回 `{ keyPath, certPath }` |
+| `genRootCa(dir)` | 生成 ECDSA P-256 根私钥与自签名根证书,返回 `{ keyPath, certPath }` |
 | `genEecKey(dir)` | 生成 ECDSA P-256 的 EEC 私钥 |
 | `genCsr(dir, commonName, org)` | 用已有 EEC 私钥生成 CSR |
 | `issueEec(csr, rootCrt, rootKey, out)` | 用根 CA 签发 EEC 证书,扩展经临时 `--extfile` 传入 |
