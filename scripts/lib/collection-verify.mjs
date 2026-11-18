@@ -1,33 +1,43 @@
 /**
- * 合集自洽性校验。
+ * 合集自洽性校验(PKI 版)。
  *
- * 校验对象是分发规范 v2 的合集目录结构:根目录信任签名、作者公钥、插件清单、版本目录与逐文件签名。
- * 只读取文件,不修改任何内容;build-collection.mjs 与 verify-collection.mjs 共用本模块。
+ * 校验对象是分发规范 v2 的合集目录结构:根目录的终端签名证书、作者公钥、插件清单、
+ * 版本目录与逐文件 CMS 签名。只读取文件,不修改任何内容;
+ * build-collection.mjs 与 verify-collection.mjs 共用本模块。
+ *
+ * 校验语义(见 .agents/signing-conventions.md 第六节):本脚本是发布前的强校验,
+ * 任一项失败都以非零退出码结束;插件市场一侧的同类校验失败只警告,不阻断。
  */
 import { readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import {
-  derivePublicKey,
-  isValidPublicKey,
-  loadPublicKey,
-  readSetSignFile,
-  readSignFile,
-  verifyFile,
-} from '../sign.mjs'
+  AUTHOR_PUB_FILE,
+  EEC_CERT_FILE,
+  ROOT_CA_FILE,
+  VERSION_SIGNED_FILES,
+  authorSignaturePath,
+  cmsSignaturePath,
+  describeCertificate,
+  describePublicKey,
+  hasDigitalSignature,
+  verifyChain,
+  verifyFileAuthor,
+  verifyFileCms,
+} from '../pki.mjs'
 
-/** 版本目录内必需的文件 */
-export const VERSION_REQUIRED_FILES = ['meta.json', 'plugin.js', 'plugin_sign.json']
-/** 版本目录内必须被 plugin_sign.json 覆盖的文件 */
-export const VERSION_SIGNED_FILES = ['meta.json', 'plugin.js']
 /** 合集根目录必需的文件 */
-export const ROOT_REQUIRED_FILES = ['meta.json', 'plugin_secret.pub', 'plugin_set_sign.json', 'datalog.json']
+export const ROOT_REQUIRED_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json']
+/** 版本目录内必需的文件,含两份 CMS 签名 */
+export const VERSION_REQUIRED_FILES = ['meta.json', 'meta.json.sig', 'plugin.js', 'plugin.js.sig']
+/** 作者目录内的公钥文件名 */
+export const AUTHOR_PUB_RELATIVE = AUTHOR_PUB_FILE
+/** 根证书文件名,仅用于报错提示,合集本身不存放根证书 */
+export const ROOT_CA_RELATIVE = ROOT_CA_FILE
+
+export { VERSION_SIGNED_FILES }
 
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const PLUGIN_NAME_PATTERN = /^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*\/dsc-[a-z0-9][a-z0-9._-]*)$/
-
-function looksLikePem(text) {
-  return typeof text === 'string' && text.includes('-----BEGIN')
-}
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -69,34 +79,15 @@ function parseJsonFile(path, label, report) {
   }
 }
 
-function loadPublicKeyOrNull(pem, code, label, relativePath, report) {
-  if (!isValidPublicKey(pem)) {
-    report.error(code, label + ' 不是合法的 SPKI PEM 公钥', relativePath)
-    return null
-  }
-  const key = loadPublicKey(pem)
-  if (key.asymmetricKeyType !== 'ed25519') {
-    report.error(code, label + ' 的密钥类型为 ' + String(key.asymmetricKeyType) + ',要求 ed25519', relativePath)
-    return null
-  }
-  return key
-}
-
 /**
- * 解析 dsc 信任公钥。
- * 优先级:显式参数 > DSC_PUBLIC_KEY > DSC_PUBLIC_KEY_PATH > 由 DSC_PRIVATE_KEY 或 WEB_PRIVATE_KEY 推导。
- * 公钥总是以私钥推导结果为准,因此提供私钥时推导结果优先。
- * @param {object} options 含 trustPublicKey 字段
- * @param {Record<string, string|undefined>} env 环境变量表
- * @returns {string|null} 公钥 PEM,无法解析时返回 null
+ * 解析根证书路径。优先级:显式参数 --root-ca > 环境变量 ROOT_CA_PATH。
+ * @param {object} [options] 含 rootCa 字段
+ * @param {Record<string, string|undefined>} [env] 环境变量表
+ * @returns {string|null} 绝对路径,未提供时返回 null
  */
-export function resolveTrustPublicKeyPem(options = {}, env = process.env) {
-  const fromValue = (value) => (looksLikePem(value) ? value : readText(resolve(value)))
-  if (options.trustPublicKey) return fromValue(options.trustPublicKey)
-  if (env.DSC_PUBLIC_KEY) return fromValue(env.DSC_PUBLIC_KEY)
-  if (env.DSC_PUBLIC_KEY_PATH) return readText(resolve(env.DSC_PUBLIC_KEY_PATH))
-  const privateKey = env.DSC_PRIVATE_KEY || env.WEB_PRIVATE_KEY
-  if (privateKey) return derivePublicKey(privateKey)
+export function resolveRootCaPath(options = {}, env = process.env) {
+  if (typeof options.rootCa === 'string' && options.rootCa.trim().length > 0) return resolve(options.rootCa.trim())
+  if (typeof env.ROOT_CA_PATH === 'string' && env.ROOT_CA_PATH.trim().length > 0) return resolve(env.ROOT_CA_PATH.trim())
   return null
 }
 
@@ -104,8 +95,8 @@ export function resolveTrustPublicKeyPem(options = {}, env = process.env) {
  * 校验一个合集目录。
  * @param {string} collectionDir 合集根目录
  * @param {object} [options] 选项
- * @param {string|null} [options.trustPublicKeyPem] dsc 信任公钥 PEM
- * @param {boolean} [options.allowEmptyTrustSign] 允许合集尚无信任签名(骨架与引导阶段)
+ * @param {string|null} [options.rootCaPath] 根证书路径,缺失时无法校验证书链与 CMS 签名
+ * @param {boolean} [options.allowPlaceholderEec] 骨架模式:根证书缺失或 eec.pem 未由根 CA 签发时降级为警告
  * @param {string} [options.collectionName] 合集名称,默认取目录名
  * @returns {{ok: boolean, root: string, collectionName: string, errorCount: number, warningCount: number, problems: Array<object>, stats: object}}
  */
@@ -121,8 +112,10 @@ export function verifyCollection(collectionDir, options = {}) {
       problems.push({ level: 'warning', code, message, path: path ?? null })
     },
   }
-  const allowEmptyTrustSign = options.allowEmptyTrustSign === true
+  const skeleton = options.allowPlaceholderEec === true
   const collectionName = options.collectionName || basename(root)
+  const rootCaPath = options.rootCaPath ? resolve(options.rootCaPath) : null
+  const eecPath = join(root, EEC_CERT_FILE)
 
   const finish = () => {
     const errorCount = problems.filter((item) => item.level === 'error').length
@@ -142,11 +135,12 @@ export function verifyCollection(collectionDir, options = {}) {
     return finish()
   }
 
-  // 一、根目录必需文件与合集元数据
+  // 一、根目录必需文件
   for (const name of ROOT_REQUIRED_FILES) {
     if (!isFile(join(root, name))) report.error('ROOT_FILE_MISSING', '根目录缺少必需文件 ' + name, name)
   }
 
+  // 二、合集元数据
   const metaPath = join(root, 'meta.json')
   const collectionMeta = isFile(metaPath) ? parseJsonFile(metaPath, '根目录 meta.json', report) : undefined
   if (isObject(collectionMeta)) {
@@ -164,66 +158,52 @@ export function verifyCollection(collectionDir, options = {}) {
     report.error('META_FIELD_INVALID', '根目录 meta.json 的顶层必须是对象', 'meta.json')
   }
 
-  // 二、合集公钥
-  const collectionPubPath = join(root, 'plugin_secret.pub')
-  let collectionPublicKey = null
-  if (isFile(collectionPubPath)) {
-    collectionPublicKey = loadPublicKeyOrNull(
-      readText(collectionPubPath),
-      'COLLECTION_PUB_INVALID',
-      'plugin_secret.pub',
-      'plugin_secret.pub',
-      report,
-    )
-  }
-
-  // 三、合集信任签名
-  const setSignPath = join(root, 'plugin_set_sign.json')
-  let trustPublicKey = null
-  const trustPublicKeyPem = options.trustPublicKeyPem ?? null
-  if (trustPublicKeyPem) {
-    trustPublicKey = loadPublicKeyOrNull(trustPublicKeyPem, 'TRUST_KEY_INVALID', 'dsc 信任公钥', null, report)
-  }
-  if (isFile(setSignPath)) {
-    let setSign
+  // 三、终端签名证书与证书链
+  const chainLevel = skeleton ? 'warn' : 'error'
+  let eecParsed = false
+  if (!isFile(eecPath)) {
+    report.error('EEC_MISSING', '根目录缺少终端签名证书 ' + EEC_CERT_FILE, EEC_CERT_FILE)
+  } else {
+    let cert = null
     try {
-      setSign = readSetSignFile(setSignPath)
+      cert = describeCertificate(eecPath)
+      eecParsed = true
     } catch (error) {
-      report.error('SET_SIGN_INVALID', error.message, 'plugin_set_sign.json')
+      report.error('EEC_INVALID', EEC_CERT_FILE + ' 不是可解析的 X.509 证书:' + error.message, EEC_CERT_FILE)
     }
-    if (setSign) {
-      if (setSign.sign.length === 0) {
-        const message = 'plugin_set_sign.json 没有任何签名,dsc 无法信任该合集'
-        if (allowEmptyTrustSign) report.warn('SET_SIGN_EMPTY', message + '(已按骨架模式放行)', 'plugin_set_sign.json')
-        else report.error('SET_SIGN_EMPTY', message, 'plugin_set_sign.json')
-      } else if (!trustPublicKey) {
-        const message = '未提供 dsc 信任公钥,无法校验合集信任签名,请用 --trust-public-key 或环境变量 DSC_PUBLIC_KEY 提供'
-        if (allowEmptyTrustSign) report.warn('TRUST_KEY_MISSING', message, 'plugin_set_sign.json')
-        else report.error('TRUST_KEY_MISSING', message, 'plugin_set_sign.json')
-      } else if (!isFile(collectionPubPath)) {
-        report.error('SET_SIGN_TARGET_MISSING', '信任签名的被签名对象 plugin_secret.pub 不存在', 'plugin_secret.pub')
+    if (cert) {
+      if (!rootCaPath) {
+        report[chainLevel](
+          'ROOT_CA_MISSING',
+          '未提供根证书,无法校验 ' + EEC_CERT_FILE + ' 的签发链;请用 --root-ca 或环境变量 ROOT_CA_PATH 提供',
+          EEC_CERT_FILE,
+        )
+      } else if (!isFile(rootCaPath)) {
+        report[chainLevel]('ROOT_CA_MISSING', '根证书文件不存在:' + rootCaPath, null)
       } else {
-        let valid = 0
-        for (const entry of setSign.sign) {
-          if (verifyFile(collectionPubPath, entry.value, trustPublicKey)) {
-            valid += 1
-            if (entry.signer !== 'dsc') {
-              report.warn('SET_SIGN_SIGNER', '合集信任签名的签名者为 ' + entry.signer + ',约定应为 dsc', 'plugin_set_sign.json')
-            }
-          } else {
-            report.error(
-              'SET_SIGN_INVALID',
-              '合集信任签名校验失败,签名者 ' + entry.signer + ',被签名对象为 plugin_secret.pub',
-              'plugin_set_sign.json',
-            )
-          }
+        const chain = verifyChain(eecPath, rootCaPath)
+        if (!chain.ok) {
+          report[chainLevel]('EEC_NOT_CHAINED', EEC_CERT_FILE + ' 不是由给定根证书签发:' + chain.reason, EEC_CERT_FILE)
         }
-        if (valid === 0 && setSign.sign.length > 0 && trustPublicKey) {
-          report.error('SET_SIGN_UNTRUSTED', 'plugin_set_sign.json 中没有任何签名能被 dsc 公钥验证', 'plugin_set_sign.json')
-        }
+      }
+      if (!cert.validNow) {
+        report.error('EEC_EXPIRED', EEC_CERT_FILE + ' 已过期,notAfter=' + String(cert.notAfter), EEC_CERT_FILE)
+      }
+      if (!hasDigitalSignature(cert.keyUsage)) {
+        report.error(
+          'EEC_KEY_USAGE',
+          EEC_CERT_FILE + ' 的 keyUsage 不含 digitalSignature,实际为 [' + cert.keyUsage.join(', ') + ']',
+          EEC_CERT_FILE,
+        )
+      }
+      if (cert.isCa === true) {
+        report.error('EEC_IS_CA', EEC_CERT_FILE + ' 是 CA 证书,要求 basicConstraints 为 CA:FALSE', EEC_CERT_FILE)
+      } else if (cert.isCa === null) {
+        report.warn('EEC_BASIC_CONSTRAINTS', EEC_CERT_FILE + ' 缺少 basicConstraints 扩展,建议显式声明 CA:FALSE', EEC_CERT_FILE)
       }
     }
   }
+  const cmsReady = eecParsed && Boolean(rootCaPath) && isFile(rootCaPath)
 
   // 四、预设标签
   const tagsPath = join(root, 'tags.json')
@@ -283,11 +263,7 @@ export function verifyCollection(collectionDir, options = {}) {
         if (tagSet) {
           for (const tag of entry.tag) {
             if (!tagSet.has(tag)) {
-              report.error(
-                'TAG_NOT_DECLARED',
-                '插件 ' + entry.plugin_name + ' 的标签 ' + tag + ' 未在 tags.json 中声明',
-                'datalog.json',
-              )
+              report.error('TAG_NOT_DECLARED', '插件 ' + entry.plugin_name + ' 的标签 ' + tag + ' 未在 tags.json 中声明', 'datalog.json')
             }
           }
         }
@@ -333,7 +309,7 @@ export function verifyCollection(collectionDir, options = {}) {
       report.warn('AUTHOR_NOT_REGISTERED', '作者 ' + author + ' 未在 plugins/author_manifest.json 中登记', 'plugins/author_manifest.json')
     }
     if (!authorCache.has(author)) {
-      authorCache.set(author, inspectAuthor({ root, author, report, stats, collectionPublicKey }))
+      authorCache.set(author, inspectAuthor({ root, author, report, stats }))
     }
     const authorContext = authorCache.get(author)
     if (!authorContext) continue
@@ -344,26 +320,35 @@ export function verifyCollection(collectionDir, options = {}) {
         'plugins/' + author + '/plugin_manifest.json',
       )
     }
-    inspectPlugin({ authorContext, entry, report, stats })
+    inspectPlugin({ authorContext, entry, report, stats, rootCaPath, eecPath, cmsReady })
   }
 
   for (const context of authorCache.values()) stats.authors += 1
   return finish()
 }
 
-function inspectAuthor({ root, author, report, stats, collectionPublicKey }) {
+function inspectAuthor({ root, author, report, stats }) {
   const authorRel = 'plugins/' + author
   const authorDir = join(root, 'plugins', author)
   if (!isDirectory(authorDir)) {
     report.error('AUTHOR_DIR_MISSING', '作者目录不存在:' + authorRel, authorRel)
     return null
   }
-  const pubPath = join(authorDir, 'plugin_secret.pub')
-  let publicKey = null
+  const pubRel = authorRel + '/' + AUTHOR_PUB_FILE
+  const pubPath = join(authorDir, AUTHOR_PUB_FILE)
+  let publicKeyUsable = false
   if (!isFile(pubPath)) {
-    report.error('AUTHOR_PUB_MISSING', '作者公钥不存在:' + authorRel + '/plugin_secret.pub', authorRel + '/plugin_secret.pub')
+    report.warn('AUTHOR_PUB_MISSING', '作者公钥不存在:' + pubRel + ',该作者的插件不能带作者签名', pubRel)
   } else {
-    publicKey = loadPublicKeyOrNull(readText(pubPath), 'AUTHOR_PUB_INVALID', authorRel + '/plugin_secret.pub', authorRel + '/plugin_secret.pub', report)
+    try {
+      const info = describePublicKey(pubPath)
+      publicKeyUsable = true
+      if (info.type !== 'ed25519') {
+        report.warn('AUTHOR_PUB_TYPE', pubRel + ' 不是 Ed25519 公钥,约定作者密钥为 Ed25519,实际为 ' + info.firstLine, pubRel)
+      }
+    } catch (error) {
+      report.error('AUTHOR_PUB_INVALID', pubRel + ' 不是合法的 PEM 公钥:' + error.message, pubRel)
+    }
   }
   const manifestRel = authorRel + '/plugin_manifest.json'
   const manifestPath = join(authorDir, 'plugin_manifest.json')
@@ -386,11 +371,11 @@ function inspectAuthor({ root, author, report, stats, collectionPublicKey }) {
       }
     }
   }
-  return { author, authorDir, authorRel, publicKey, manifestPlugins, stats, collectionPublicKey }
+  return { author, authorDir, authorRel, pubPath, pubRel, publicKeyUsable, manifestPlugins, stats }
 }
 
-function inspectPlugin({ authorContext, entry, report, stats }) {
-  const { author, authorDir, authorRel, publicKey: authorPublicKey } = authorContext
+function inspectPlugin({ authorContext, entry, report, stats, rootCaPath, eecPath, cmsReady }) {
+  const { author, authorDir, authorRel, pubPath, pubRel, publicKeyUsable } = authorContext
   const dirName = entry.plugin_name.split('/').pop()
   const pluginRel = authorRel + '/' + dirName
   const pluginDir = join(authorDir, dirName)
@@ -443,7 +428,7 @@ function inspectPlugin({ authorContext, entry, report, stats }) {
       }
     }
     inspectVersionMeta({ versionDir, versionRel, version, pluginName: entry.plugin_name, report })
-    inspectVersionSign({ versionDir, versionRel, author, authorPublicKey, collectionPublicKey: authorContext.collectionPublicKey, report })
+    inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, eecPath, cmsReady, authorPubPath: pubPath, authorPubRel: pubRel, authorPubUsable: publicKeyUsable, author })
   }
 }
 
@@ -464,55 +449,38 @@ function inspectVersionMeta({ versionDir, versionRel, version, pluginName, repor
   }
 }
 
-function inspectVersionSign({ versionDir, versionRel, author, authorPublicKey, collectionPublicKey, report }) {
-  const signPath = join(versionDir, 'plugin_sign.json')
-  if (!isFile(signPath)) return
-  let signFile
-  try {
-    signFile = readSignFile(signPath)
-  } catch (error) {
-    report.error('PLUGIN_SIGN_INVALID', error.message, versionRel + '/plugin_sign.json')
-    return
-  }
-  const covered = new Set(signFile.sign.map((entry) => entry.for))
+function inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, eecPath, cmsReady, authorPubPath, authorPubRel, authorPubUsable, author }) {
   for (const name of VERSION_SIGNED_FILES) {
-    if (!covered.has(name)) {
-      report.error('SIGN_COVERAGE', versionRel + '/plugin_sign.json 未覆盖 ' + name, versionRel + '/plugin_sign.json')
+    const filePath = join(versionDir, name)
+    if (!isFile(filePath)) continue
+    const rel = versionRel + '/' + name
+    const sigPath = cmsSignaturePath(filePath)
+    if (!isFile(sigPath)) {
+      // 缺签名文件已由 VERSION_REQUIRED_FILES 报错,这里不重复
+    } else if (!cmsReady) {
+      report.warn('SIGN_UNVERIFIABLE', rel + '.sig 无法校验,缺少根证书或 ' + EEC_CERT_FILE, rel + '.sig')
+    } else {
+      const result = verifyFileCms(filePath, sigPath, rootCaPath, eecPath)
+      if (!result.ok) {
+        report.error('SIGN_VERIFY_FAILED', rel + '.sig 校验失败,文件内容可能已被篡改:' + String(result.reason), rel + '.sig')
+      }
     }
-  }
-  const collectionEntries = signFile.sign.filter((entry) => entry.signer !== author)
-  if (collectionEntries.length === 0) {
-    report.error('MISSING_COLLECTION_SIGN', versionRel + '/plugin_sign.json 缺少合集签名,签名者应不等于作者名 ' + author, versionRel + '/plugin_sign.json')
-  }
-  const collectionPublicKeyResolved = collectionPublicKey ?? null
-  for (const entry of signFile.sign) {
-    if (entry.for.includes('/') || entry.for.includes('\\')) {
-      report.error('SIGN_TARGET_NOT_LOCAL', versionRel + '/plugin_sign.json 的 for 必须是同目录文件名,实际为 ' + entry.for, versionRel + '/plugin_sign.json')
-      continue
-    }
-    const targetPath = join(versionDir, entry.for)
-    if (!isFile(targetPath)) {
-      report.error('SIGN_TARGET_MISSING', versionRel + '/plugin_sign.json 引用了不存在的文件 ' + entry.for, versionRel + '/' + entry.for)
-      continue
-    }
-    const isAuthorSign = entry.signer === author
-    const primaryKey = isAuthorSign ? authorPublicKey : collectionPublicKeyResolved
-    const fallbackKey = isAuthorSign ? collectionPublicKeyResolved : authorPublicKey
-    const label = versionRel + '/plugin_sign.json 中签名者 ' + entry.signer + ' 对 ' + entry.for + ' 的签名'
-    if (primaryKey && verifyFile(targetPath, entry.value, primaryKey)) continue
-    if (!primaryKey && !fallbackKey) {
-      report.warn('SIGN_UNVERIFIABLE', label + ' 无法校验,缺少可用公钥', versionRel + '/plugin_sign.json')
-      continue
-    }
-    if (fallbackKey && verifyFile(targetPath, entry.value, fallbackKey)) {
-      report.warn(
-        'SIGN_KEY_FALLBACK',
-        label + ' 由非预期公钥验证通过(按签名者应为' + (isAuthorSign ? '作者公钥' : '合集公钥') + ')',
-        versionRel + '/plugin_sign.json',
+
+    const authorSigPath = authorSignaturePath(filePath)
+    if (!isFile(authorSigPath)) continue
+    const authorRel = rel + '.author.sig'
+    if (!authorPubUsable) {
+      report.error(
+        'AUTHOR_PUB_MISSING',
+        authorRel + ' 存在,但 ' + authorPubRel + ' 缺失或不可用,无法校验作者签名',
+        authorRel,
       )
       continue
     }
-    report.error('SIGN_VERIFY_FAILED', label + ' 校验失败,文件内容可能已被篡改', versionRel + '/plugin_sign.json')
+    const result = verifyFileAuthor(filePath, authorSigPath, authorPubPath)
+    if (!result.ok) {
+      report.error('AUTHOR_SIGN_FAILED', authorRel + ' 校验失败,作者 ' + author + ' 的签名与文件不匹配:' + String(result.reason), authorRel)
+    }
   }
 }
 

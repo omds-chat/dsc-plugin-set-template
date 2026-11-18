@@ -36,20 +36,54 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # 强校验:签名、公钥、清单、版本目录必须自洽,任一项失败即中止发布。
-      # dsc 信任公钥由 WEB_PRIVATE_KEY 推导,公钥总是以私钥推导结果为准。
-      - name: Verify collection
-        env:
-          DSC_PRIVATE_KEY: ${{ secrets.WEB_PRIVATE_KEY }}
-        run: node scripts/verify-collection.mjs --dir .
+      # 按 .github/plugins-sources.json 收录插件;清单为空时脚本直接返回 0。
+      # 收录会复制作者侧分离签名与作者公钥,不生成合集签名。
+      - name: Import plugins
+        run: node scripts/import-plugins.mjs
 
-      # 用合集私钥为每个版本的 meta.json 与 plugin.js 重新签名,并生成 dist/ 分发内容。
-      # 私钥推导出的公钥必须与仓库内 plugin_secret.pub 一致,否则步骤失败。
+      # 根证书二选一,优先级从高到低:
+      #   1. secrets.ROOT_CA_PEM  根证书 PEM 文本,适合不便公开拉取的场景;
+      #   2. vars.ROOT_CA_URL     根证书下载地址,默认取 online-data 分支的 root_ca.crt。
+      - name: Resolve root CA
+        env:
+          ROOT_CA_PEM: ${{ secrets.ROOT_CA_PEM }}
+          ROOT_CA_URL: ${{ vars.ROOT_CA_URL }}
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/root_ca.crt"
+          if [ -n "${ROOT_CA_PEM:-}" ]; then
+            printf '%s\n' "$ROOT_CA_PEM" > "$target"
+            echo "根证书来源:secrets.ROOT_CA_PEM"
+          elif [ -n "${ROOT_CA_URL:-}" ]; then
+            curl -fsSL "$ROOT_CA_URL" -o "$target"
+            echo "根证书来源:$ROOT_CA_URL"
+          else
+            echo "缺少根证书:请设置 secrets.ROOT_CA_PEM 或 vars.ROOT_CA_URL" >&2
+            exit 1
+          fi
+          echo "ROOT_CA_PATH=$target" >> "$GITHUB_ENV"
+
+      # 强校验:合集根目录的 eec.pem 必须由该根证书签发,且未过期、
+      # keyUsage 含 digitalSignature、basicConstraints 为 CA:FALSE。
+      - name: Verify EEC against root CA
+        run: |
+          set -euo pipefail
+          openssl verify -CAfile "$ROOT_CA_PATH" eec.pem
+          openssl x509 -in eec.pem -noout -subject -issuer -enddate
+          openssl x509 -in eec.pem -noout -ext keyUsage
+          openssl x509 -in eec.pem -noout -ext basicConstraints
+          openssl x509 -in eec.pem -noout -checkend 0
+
+      # 用 EEC 私钥为每个版本的 meta.json 与 plugin.js 生成 CMS 分离签名,并生成 dist/。
+      # 私钥只从 secret 读取,且必须与仓库内的 eec.pem 配对,否则步骤直接失败。
       - name: Build distribution
         env:
-          DSC_PRIVATE_KEY: ${{ secrets.WEB_PRIVATE_KEY }}
-          PLUGIN_PRIVATE_KEY: ${{ secrets.PLUGIN_PRIVATE_KEY }}
-        run: node scripts/build-collection.mjs --dir . --sign --out dist
+          EEC_SECRET_KEY: ${{ secrets.EEC_SECRET_KEY }}
+        run: node scripts/build-collection.mjs --dir . --root-ca "$ROOT_CA_PATH" --sign --out dist
+
+      # 对即将分发的产物再做一次完整校验:证书链、CMS 签名、作者签名、清单与版本目录。
+      - name: Verify distribution
+        run: node scripts/verify-collection.mjs --dir dist --root-ca "$ROOT_CA_PATH"
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

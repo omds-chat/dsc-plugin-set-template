@@ -2,20 +2,30 @@
 /**
  * 校验合集并生成分发内容。
  *
- * 校验不通过时以非零退出码结束,并列出全部问题。校验通过后把根目录元数据、公钥、签名与
- * plugins/ 目录复制到输出目录,并写入 build-info.json 作为分发索引。
+ * 流程:--sign 时先用 EEC 为每个版本的 meta.json 与 plugin.js 生成 CMS 分离签名,
+ * 再校验合集,校验不通过则以非零退出码结束并列出全部问题;
+ * 校验通过后把根目录元数据、eec.pem 与 plugins/ 目录复制到输出目录,
+ * 并写入 build-info.json 作为分发索引。根证书不进 dist,由 online-data 分发。
  *
  * 用法:
- *   node scripts/build-collection.mjs --dir . --out dist
- *   node scripts/build-collection.mjs --dir . --sign --out dist
- *   node scripts/build-collection.mjs --dir . --trust-public-key dsc.pub
+ *   node scripts/build-collection.mjs --dir . --root-ca root_ca.crt --out dist
+ *   EEC_SECRET_KEY=... node scripts/build-collection.mjs --dir . --root-ca root_ca.crt --sign --out dist
+ *   node scripts/build-collection.mjs --dir template --allow-placeholder-eec --out dist
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import { derivePublicKey, mergeSignFile, readSignFile, signFilesInDir, writeSignFile } from './sign.mjs'
-import { VERSION_SIGNED_FILES, formatProblems, resolveTrustPublicKeyPem, verifyCollection } from './lib/collection-verify.mjs'
+import { formatProblems, resolveRootCaPath, verifyCollection } from './lib/collection-verify.mjs'
+import {
+  EEC_CERT_FILE,
+  VERSION_SIGNED_FILES,
+  certMatchesKey,
+  describeCertificate,
+  requireOpenssl,
+  resolveKeyFile,
+  signFileCms,
+} from './pki.mjs'
 
-const ROOT_DIST_FILES = ['meta.json', 'plugin_set_sign.json', 'plugin_secret.pub', 'datalog.json', 'tags.json']
+const ROOT_DIST_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json', 'tags.json']
 
 function usage() {
   process.stdout.write([
@@ -24,17 +34,15 @@ function usage() {
     '选项:',
     '  --dir <目录>                合集根目录,默认当前目录',
     '  --out <目录>                分发内容输出目录,默认 dist',
-    '  --trust-public-key <值>     dsc 信任公钥,可为 PEM 文本或文件路径',
-    '  --allow-empty-trust-sign    允许合集尚无 dsc 信任签名(骨架与引导阶段)',
-    '  --sign                      用 PLUGIN_PRIVATE_KEY 为插件重新签名',
-    '  --private-key <值>          合集私钥 PEM 文本或文件路径,默认读环境变量 PLUGIN_PRIVATE_KEY',
+    '  --root-ca <路径>            根证书路径,用于校验证书链与 CMS 签名',
+    '  --sign                      用 EEC_SECRET_KEY 为每个版本的 meta.json 与 plugin.js 签名',
+    '  --allow-placeholder-eec     骨架模式:根证书缺失或 eec.pem 未由根 CA 签发时只警告',
     '  --collection-name <名称>    合集名称,默认取合集目录名',
     '  --help                      显示本说明',
     '',
     '环境变量:',
-    '  DSC_PUBLIC_KEY 或 DSC_PUBLIC_KEY_PATH   dsc 信任公钥',
-    '  DSC_PRIVATE_KEY 或 WEB_PRIVATE_KEY      dsc 信任私钥,公钥由其推导',
-    '  PLUGIN_PRIVATE_KEY                      合集签名私钥',
+    '  ROOT_CA_PATH                根证书路径,等价于 --root-ca',
+    '  EEC_SECRET_KEY              EEC 私钥,可为 PEM 文本或文件路径',
     '',
   ].join('\n'))
 }
@@ -43,10 +51,9 @@ function parseArgs(argv) {
   const options = {
     dir: '.',
     out: 'dist',
-    trustPublicKey: null,
-    allowEmptyTrustSign: false,
+    rootCa: null,
     sign: false,
-    privateKey: null,
+    allowPlaceholderEec: false,
     collectionName: null,
     help: false,
   }
@@ -65,10 +72,9 @@ function parseArgs(argv) {
     switch (flag) {
       case '--dir': options.dir = take(); break
       case '--out': options.out = take(); break
-      case '--trust-public-key': options.trustPublicKey = take(); break
-      case '--allow-empty-trust-sign': options.allowEmptyTrustSign = true; break
+      case '--root-ca': options.rootCa = take(); break
       case '--sign': options.sign = true; break
-      case '--private-key': options.privateKey = take(); break
+      case '--allow-placeholder-eec': options.allowPlaceholderEec = true; break
       case '--collection-name': options.collectionName = take(); break
       case '--help':
       case '-h': options.help = true; break
@@ -80,14 +86,6 @@ function parseArgs(argv) {
 
 function problem(level, code, message, path) {
   return { level, code, message, path: path ?? null }
-}
-
-function readKeySource(source) {
-  return source.includes('-----BEGIN') ? source : readFileSync(resolve(source), 'utf8')
-}
-
-function normalizePem(text) {
-  return text.replace(/\r\n/g, '\n').trim()
 }
 
 function readJson(path) {
@@ -128,53 +126,57 @@ function listVersionDirs(root) {
   return found
 }
 
+/**
+ * 用 EEC 为每个版本的 meta.json 与 plugin.js 生成 CMS 分离签名。
+ * 私钥与 eec.pem 不配对时直接失败,避免产出一批无法验签的签名。
+ */
 function signCollection(root, options, problems) {
-  const signer = options.collectionName || basename(root)
-  const source = options.privateKey || process.env.PLUGIN_PRIVATE_KEY
+  const source = process.env.EEC_SECRET_KEY
   if (!source) {
-    problems.push(problem('error', 'SIGN_KEY_MISSING', '启用 --sign 时需要环境变量 PLUGIN_PRIVATE_KEY 或参数 --private-key', null))
+    problems.push(problem('error', 'SIGN_KEY_MISSING', '启用 --sign 时需要环境变量 EEC_SECRET_KEY(P-256 私钥 PEM 或路径)', null))
     return
   }
-  let privateKeyPem
-  let publicKeyPem
+  const eecPath = join(root, EEC_CERT_FILE)
+  if (!existsSync(eecPath)) {
+    problems.push(problem('error', 'EEC_MISSING', '根目录缺少 ' + EEC_CERT_FILE + ',无法签名', EEC_CERT_FILE))
+    return
+  }
+  let keyFile
   try {
-    privateKeyPem = readKeySource(source)
-    publicKeyPem = derivePublicKey(privateKeyPem)
+    keyFile = resolveKeyFile(source, 'EEC_SECRET_KEY')
   } catch (error) {
-    problems.push(problem('error', 'SIGN_KEY_INVALID', '合集私钥不可用:' + error.message, null))
+    problems.push(problem('error', 'SIGN_KEY_INVALID', 'EEC 私钥不可用:' + error.message, null))
     return
   }
-
-  const pubPath = join(root, 'plugin_secret.pub')
-  if (!existsSync(pubPath)) {
-    writeFileSync(pubPath, publicKeyPem, 'utf8')
-    problems.push(problem('warning', 'SIGN_PUB_CREATED', '已由合集私钥生成 plugin_secret.pub,需要 dsc 对该文件签发合集信任签名', 'plugin_secret.pub'))
-  } else if (normalizePem(readFileSync(pubPath, 'utf8')) !== normalizePem(publicKeyPem)) {
-    problems.push(
-      problem(
-        'error',
-        'SIGN_KEY_MISMATCH',
-        'PLUGIN_PRIVATE_KEY 推导的公钥与仓库中的 plugin_secret.pub 不一致;更换合集密钥会让 dsc 已签发的信任签名全部失效',
-        'plugin_secret.pub',
-      ),
-    )
-    return
-  }
-
-  for (const { versionDir, version } of listVersionDirs(root)) {
-    const signPath = join(versionDir, 'plugin_sign.json')
-    let existing = { sign: [] }
-    if (existsSync(signPath)) {
-      try {
-        existing = readSignFile(signPath)
-      } catch (error) {
-        problems.push(problem('error', 'PLUGIN_SIGN_INVALID', error.message, signPath))
-        continue
+  try {
+    if (!certMatchesKey(eecPath, keyFile.path)) {
+      problems.push(
+        problem(
+          'error',
+          'SIGN_KEY_MISMATCH',
+          'EEC_SECRET_KEY 与 ' + EEC_CERT_FILE + ' 不是同一把密钥;请确认 eec.pem 与 CI secret 配对',
+          EEC_CERT_FILE,
+        ),
+      )
+      return
+    }
+    for (const { versionDir, version } of listVersionDirs(root)) {
+      for (const name of VERSION_SIGNED_FILES) {
+        const filePath = join(versionDir, name)
+        if (!existsSync(filePath)) {
+          problems.push(problem('error', 'SIGN_TARGET_MISSING', '版本 ' + version + ' 缺少待签名文件 ' + name, filePath))
+          continue
+        }
+        try {
+          signFileCms(filePath, eecPath, keyFile.path)
+          problems.push(problem('warning', 'SIGNED', '已用 EEC 为 ' + version + '/' + name + ' 生成 CMS 签名', filePath + '.sig'))
+        } catch (error) {
+          problems.push(problem('error', 'SIGN_FAILED', '为 ' + version + '/' + name + ' 签名失败:' + error.message, filePath))
+        }
       }
     }
-    const entries = signFilesInDir(versionDir, VERSION_SIGNED_FILES, privateKeyPem, signer)
-    writeSignFile(signPath, mergeSignFile(existing, entries))
-    problems.push(problem('warning', 'SIGNED', '已用签名者 ' + signer + ' 为 ' + version + ' 签名', versionDir))
+  } finally {
+    keyFile.cleanup()
   }
 }
 
@@ -228,6 +230,16 @@ function collectIndex(root) {
   return index
 }
 
+function readEecFingerprint(root) {
+  const eecPath = join(root, EEC_CERT_FILE)
+  if (!existsSync(eecPath)) return null
+  try {
+    return describeCertificate(eecPath).fingerprint
+  } catch {
+    return null
+  }
+}
+
 function writeDist(root, outDir, collectionName) {
   if (resolve(outDir) === resolve(root)) throw new Error('输出目录不能与合集根目录相同')
   rmSync(outDir, { recursive: true, force: true })
@@ -245,6 +257,7 @@ function writeDist(root, outDir, collectionName) {
     collection: collectionName,
     plugin_count: index.length,
     author_count: new Set(index.map((item) => item.author)).size,
+    eec_sha256: readEecFingerprint(root),
     plugins: index,
   }
   writeFileSync(join(outDir, 'build-info.json'), JSON.stringify(info, null, 2) + '\n', 'utf8')
@@ -266,22 +279,23 @@ function main() {
     return 0
   }
 
+  try {
+    requireOpenssl()
+  } catch (error) {
+    process.stderr.write('构建失败:' + error.message + '\n')
+    return 2
+  }
+
   const root = resolve(options.dir)
   const outDir = resolve(options.out)
   const problems = []
 
   if (options.sign) signCollection(root, options, problems)
 
-  let trustPublicKeyPem = null
-  try {
-    trustPublicKeyPem = resolveTrustPublicKeyPem({ trustPublicKey: options.trustPublicKey })
-  } catch (error) {
-    problems.push(problem('error', 'TRUST_KEY_UNREADABLE', 'dsc 信任公钥不可用:' + error.message, null))
-  }
-
+  const rootCaPath = resolveRootCaPath(options)
   const result = verifyCollection(root, {
-    trustPublicKeyPem,
-    allowEmptyTrustSign: options.allowEmptyTrustSign,
+    rootCaPath,
+    allowPlaceholderEec: options.allowPlaceholderEec,
     collectionName: options.collectionName,
   })
   const allProblems = [...problems, ...result.problems]
@@ -312,6 +326,6 @@ function main() {
 try {
   process.exitCode = main()
 } catch (error) {
-  process.stderr.write('构建失败:' + error.message + '\n')
+  process.stderr.write('构建失败:' + (error && error.message ? error.message : String(error)) + '\n')
   process.exitCode = 1
 }
