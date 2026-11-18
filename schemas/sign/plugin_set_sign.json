@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/sign/plugin_set_sign.json",
+  "title": "Plugin Sign Schema",
+  "description": "DSC 插件签名信息结构",
+  "type": "object",
+  "properties": {
+    "sign": {
+      "type": "array",
+      "description": "签名列表,支持多签名,至少包含 dsc 的合法签名",
+      "items": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "签名字符串值"
+          },
+          "signer": {
+            "type": "string",
+            "description": "签名者标识"
+          }
+        },
+        "required": [
+          "value",
+          "signer"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "sign"
+  ],
+  "additionalProperties": false
+}

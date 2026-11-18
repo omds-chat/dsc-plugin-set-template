@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/collection/datalog.json",
+  "title": "dsc-plugin-collection-datalog",
+  "description": "插件合集根目录 datalog.json。以插件名称为唯一键的插件目录,插件市场据此列出该合集收录的全部插件。plugin_name 在合集内必须唯一,由校验脚本保证。",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "plugin_name": {
+        "$ref": "#/$defs/pluginName"
+      },
+      "author": {
+        "$ref": "#/$defs/authorName"
+      },
+      "tag": {
+        "type": "array",
+        "description": "插件标签,取自合集 tags.json 的预设标签;允许空数组。",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
+      }
+    },
+    "required": [
+      "plugin_name",
+      "author",
+      "tag"
+    ],
+    "additionalProperties": false
+  },
+  "uniqueItems": true,
+  "required": [],
+  "additionalProperties": false,
+  "$defs": {
+    "pluginName": {
+      "type": "string",
+      "maxLength": 214,
+      "pattern": "^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$",
+      "description": "插件名,即插件的 npm 包名。全局包为 dsc-xxx;命名空间包为 @scope/dsc-xxx。仅允许小写字母、数字、点、下划线、连字符。",
+      "examples": [
+        "dsc-demo",
+        "@alice/dsc-demo"
+      ]
+    },
+    "authorName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "maxLength": 39,
+      "description": "作者英文名称,即作者目录名。仅允许小写字母、数字、连字符,不得以连字符开头或结尾。",
+      "examples": [
+        "alice",
+        "omdsc-dev"
+      ]
+    }
+  }
+}

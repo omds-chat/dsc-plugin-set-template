@@ -1,0 +1,71 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 只读仓库内容,发布 Pages 与换取 OIDC 令牌所需的权限除此之外一概不给。
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 强校验:签名、公钥、清单、版本目录必须自洽,任一项失败即中止发布。
+      # dsc 信任公钥由 WEB_PRIVATE_KEY 推导,公钥总是以私钥推导结果为准。
+      - name: Verify collection
+        env:
+          DSC_PRIVATE_KEY: ${{ secrets.WEB_PRIVATE_KEY }}
+        run: node scripts/verify-collection.mjs --dir .
+
+      # 用合集私钥为每个版本的 meta.json 与 plugin.js 重新签名,并生成 dist/ 分发内容。
+      # 私钥推导出的公钥必须与仓库内 plugin_secret.pub 一致,否则步骤失败。
+      - name: Build distribution
+        env:
+          DSC_PRIVATE_KEY: ${{ secrets.WEB_PRIVATE_KEY }}
+          PLUGIN_PRIVATE_KEY: ${{ secrets.PLUGIN_PRIVATE_KEY }}
+        run: node scripts/build-collection.mjs --dir . --sign --out dist
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,4 @@
+# 本模板不引入任何依赖。若后续新增带构建脚本的依赖,在此放行。
+packages:
+  - .
+onlyBuiltDependencies: []

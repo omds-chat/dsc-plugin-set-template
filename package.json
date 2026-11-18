@@ -1,0 +1,25 @@
+{
+  "name": "awesome-dsc-plugin-set-template",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "dsc 插件合集模板:分发规范 v2 的目录骨架、JSON Schema、签名与校验工具",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omdsc-dev/awesome-dsc-plugin-set-template.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "verify": "node scripts/verify-collection.mjs --dir template --allow-empty-trust-sign",
+    "build": "node scripts/build-collection.mjs --dir template --allow-empty-trust-sign --out dist"
+  },
+  "keywords": [
+    "dsc",
+    "dsc-plugin",
+    "plugin-collection",
+    "template"
+  ]
+}
