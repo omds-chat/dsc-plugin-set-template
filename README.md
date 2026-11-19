@@ -83,7 +83,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<合集
 | 根 CA 密钥 | ECDSA P-256,OpenSSL 原生 PEM;自签名证书 `keyUsage=critical,keyCertSign,cRLSign`,`basicConstraints=critical,CA:TRUE,pathlen:0`,有效期 3650 天。浏览器 WebCrypto 对 P-256 支持最广,证书链校验要在浏览器里做,Ed25519 在目标浏览器下限不可用 |
 | EEC 密钥 | ECDSA P-256,OpenSSL 原生 PEM。OpenSSL 的 CMS 实现对 Ed25519 报 `provider signature failure`,实测不可用 |
 | EEC 证书 | 由根 CA 签发,`keyUsage=critical,digitalSignature`,`basicConstraints=critical,CA:FALSE`,有效期 365 天 |
-| 合集签名 | CMS 分离签名,`openssl cms -sign -binary -outform DER -nocerts -noattr`,产物为 `<文件>.sig`。签名与验签都带 `-binary`,按原始字节处理,不经换行规范化;产物固定为 DER,验签带 `-inform DER`。DER 是跨仓库统一格式:默认的 S/MIME `multipart/signed` 包装浏览器无法解析,而插件市场要在浏览器里验签 |
+| 合集签名 | CMS 分离签名,`openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr`,产物为 `<文件>.sig`。签名与验签都带 `-binary`,按原始字节处理,不经换行规范化;产物固定为 DER,验签带 `-inform DER`。DER 是跨仓库统一格式:默认的 S/MIME `multipart/signed` 包装浏览器无法解析,而插件市场要在浏览器里验签 |
 | 作者签名 | 裸公钥分离签名,`openssl pkeyutl -sign -rawin`(Ed25519),产物为 `<文件>.author.sig` |
 
 ### 命令
@@ -106,14 +106,14 @@ openssl x509 -req -in eec.csr -CA root_ca.crt -CAkey root_secret.pem -CAcreatese
   -extfile <(printf 'keyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\n')
 ```
 
-合集签名与验签:
+合集签名与验签。三层清单与 `plugin.js` 用同一条命令,只是文件名不同:
 
 ```bash
-openssl cms -sign -binary -outform DER -in meta.json -out meta.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
-openssl cms -verify -binary -inform DER -in meta.json.sig -content meta.json -CAfile root_ca.crt -certfile eec.pem
+openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
+openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile eec.pem
 ```
 
-`-outform DER` 不可省略。默认输出是 S/MIME `multipart/signed` 包装,浏览器无法解析,而插件市场要在浏览器里验签,所以 DER 是跨仓库统一格式:签名方固定 `-outform DER`,验签方固定 `-inform DER`,任何一方改用默认格式都会验签失败。产物可用 `openssl asn1parse -inform DER -in meta.json.sig` 确认为 DER。
+`-md sha512` 固定摘要算法,不依赖 OpenSSL 的默认值。`-outform DER` 不可省略。默认输出是 S/MIME `multipart/signed` 包装,浏览器无法解析,而插件市场要在浏览器里验签,所以 DER 是跨仓库统一格式:签名方固定 `-outform DER`,验签方固定 `-inform DER`,任何一方改用默认格式都会验签失败。产物可用 `openssl asn1parse -inform DER -in manifest.json.sig` 确认为 DER。
 
 作者签名与验签:
 
@@ -130,41 +130,91 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 ```text
 <collection>/
-├── eec.pem                # 终端签名证书,随 Pages 分发
-├── meta.json
-├── datalog.json
-├── tags.json
+├── eec.pem                    # 终端签名证书,随 Pages 分发,不进任何清单
+├── meta.json                  # L1
+├── datalog.json               # L1
+├── tags.json                  # L1
+├── manifest.json              # L1 清单
+├── manifest.json.sig          # L1 清单签名
 └── plugins/
-    ├── author_manifest.json
+    ├── author_manifest.json   # L1
     └── <作者>/
-        ├── author_pub.pem        # 作者公钥,OpenSSL PEM,Ed25519
-        ├── plugin_manifest.json
+        ├── author_pub.pem         # L2,作者公钥,OpenSSL PEM,Ed25519
+        ├── plugin_manifest.json   # L2
+        ├── manifest.json          # L2 清单
+        ├── manifest.json.sig      # L2 清单签名
         └── <插件>/
-            ├── versions.json
+            ├── versions.json      # L3
+            ├── manifest.json      # L3 清单
+            ├── manifest.json.sig  # L3 清单签名
             └── <x.y.z>/
-                ├── meta.json
-                ├── meta.json.sig        # 合集 CMS 签名
+                ├── meta.json          # L3
                 ├── plugin.js
-                ├── plugin.js.sig        # 合集 CMS 签名
+                ├── plugin.js.sig        # 合集 CMS 签名,覆盖产物本体
                 └── plugin.js.author.sig # 作者裸公钥签名,可选
 ```
 
+分发结构是三层哈希清单,每层一份 `manifest.json` 与一份 `manifest.json.sig`:
+
+| 层 | 位置 | 覆盖的文件(相对该层目录) |
+|:---:|:---:|:---:|
+| L1 | 合集根 | `meta.json`、`datalog.json`、`tags.json`、`plugins/author_manifest.json` |
+| L2 | `plugins/<作者>/` | `author_pub.pem`、`plugin_manifest.json` |
+| L3 | `plugins/<作者>/<插件>/` | `versions.json`、`<版本>/meta.json` |
+
+清单格式,JSON Schema 见 `schemas/manifest.schema.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "files": [
+    { "path": "datalog.json", "sha512": "<128 位小写十六进制>" }
+  ]
+}
+```
+
+- `path` 相对清单所在目录,使用正斜杠,不得出现 `..` 或绝对路径,也不得指向清单自身。
+- 哈希算法 SHA-512,十六进制小写。
+- `revision` 是每层独立的正整数:该层文件集合或内容变化时加一,不变时沿用旧值,没有旧清单时从 1 开始。
+- L3 不覆盖 `plugin.js` 与 `plugin.js.sig`:产物本体由每个版本的 `plugin.js.sig` 独立签名,清单只描述元数据。
+- `meta.json.sig` 已取消,版本目录的合集签名只剩 `plugin.js.sig`;`plugin.js.author.sig` 可选保留。
+
+三层之间不做收束:L1 不引用 L2,L2 不引用 L3,任何一层都可以单独发布、单独校验、单独重签。取舍是放弃「一次校验拿到全树摘要」,换取按插件增量更新:改一个插件只需 L3 的 `revision` 加一,L2 与 L1 的 `revision` 不变,客户端也只重新拉取这一层的清单与签名。若把三层收束成一份根清单,任何插件发版都会改动根清单,所有客户端都得重拉整份摘要。
+
 旧的 `plugin_secret.pub` 与 `plugin_set_sign.json` 已删除。合集的可信性由「根 CA 签发的 EEC」证明,不再单独签发信任签名;根证书不进 `dist/`,由 online-data 分支分发,网页用内嵌的根证书指纹核对。
 
-## 校验规则
+## 签名与校验
 
-`pnpm verify` 逐项检查,任一错误都以非零退出码结束并一次性列出全部问题,每条都带文件路径。
+### 签什么
+
+| 签名 | 覆盖对象 | 产物 |
+|:---:|:---:|:---:|
+| 合集 CMS 签名 | L1、L2、L3 各一份清单 | `manifest.json.sig`,每层一份 |
+| 合集 CMS 签名 | 每个版本的 `plugin.js` | `plugin.js.sig` |
+| 作者裸公钥签名 | `plugin.js`,可选 | `plugin.js.author.sig` |
+
+签名命令固定为 `openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr`,产物写到 `<文件>.sig`。`meta.json` 不再单独签名,由 L3 清单的 SHA-512 覆盖。
+
+### 校验规则
+
+`pnpm verify` 逐项检查,任一错误都以非零退出码结束并一次性列出全部问题,每条都带层号与文件路径。
 
 | 编号 | 规则 |
 |:---:|:---:|
 | 1 | 根目录 `eec.pem` 存在,由给定根证书签发(`--root-ca` 或 `ROOT_CA_PATH`),未过期,`keyUsage` 含 `digitalSignature`,`basicConstraints` 非 CA |
 | 2 | `datalog.json` 中的每个插件都在 `plugins/<author>/plugin_manifest.json` 中出现,且插件目录存在 |
 | 3 | 每个插件目录有 `versions.json`,`latest` 必须在 `versions` 列表内 |
-| 4 | 每个版本目录有 `meta.json`、`meta.json.sig`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -inform DER -CAfile <根证书> -certfile eec.pem` 验签,失败即报错 |
+| 4 | 每个版本目录有 `meta.json`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -md sha512 -inform DER -CAfile <根证书> -certfile eec.pem` 验签,失败即报错 |
 | 5 | 若存在 `<文件>.author.sig`,则 `plugins/<author>/author_pub.pem` 必须存在,并用 `openssl pkeyutl -verify` 验证,失败即报错 |
 | 6 | `tags.json` 存在时,`datalog.json` 的 `tag` 必须取自其中 |
+| 7 | 三层清单存在且结构合法:`schemaVersion` 为 1,`revision` 为正整数,`files` 为非空数组,条目只含 `path` 与 `sha512` |
+| 8 | 清单条目的 `path` 合法:正斜杠、相对路径、不含 `..`、不指向清单自身、不重复 |
+| 9 | 覆盖范围与该层应有的文件严格相等:该有的都在清单里,清单里没有多余项,L3 不得出现 `plugin.js` 与 `plugin.js.sig` |
+| 10 | 清单记录的每个 SHA-512 与文件实际内容一致,不一致时报出层号与具体文件 |
+| 11 | 每层 `manifest.json.sig` 用根证书与 `eec.pem` 验签,失败即报错 |
 
-`pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:根证书缺失或 `eec.pem` 未由根 CA 签发时降级为警告。真实合集的 CI 不带这个开关。
+`pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:根证书缺失、`eec.pem` 未由根 CA 签发、三层清单或清单签名尚未生成时降级为警告。真实合集的 CI 不带这个开关;`--allow-missing-manifest` 只放开清单与清单签名缺失,结构与哈希检查照常执行。
 
 校验语义分两档:本仓库的脚本是发布前的强校验,失败即阻断;插件市场一侧的证书链校验、插件签名校验与网页文件签名校验失败只警告,不阻断,也不做兜底。
 
@@ -180,6 +230,8 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | `issueEec(csr, rootCrt, rootKey, out)` | 用根 CA 签发 EEC 证书,扩展经临时 `--extfile` 传入 |
 | `signFileCms(file, eecCrt, eecKey)` | 生成 CMS 分离签名,输出 `<文件>.sig` |
 | `verifyFileCms(file, sig, rootCrt, eecCrt)` | 校验 CMS 分离签名,信任锚是根证书 |
+| `signManifest(manifest, eecCrt, eecKey)` | 为清单签名,输出 `<清单>.sig`,参数与 `signFileCms` 一致 |
+| `verifyManifest(manifest, sig, rootCrt, eecCrt)` | 校验清单签名 |
 | `genAuthorKey(dir)` | 生成作者 Ed25519 密钥对,返回 `{ keyPath, pubPath }` |
 | `signFileAuthor(file, authorKey)` | 生成作者裸公钥分离签名,输出 `<文件>.author.sig` |
 | `verifyFileAuthor(file, sig, authorPub)` | 校验作者签名 |
@@ -189,7 +241,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 ## 校验与部署流程
 
-- 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 会在校验通过后把分发内容写入 `dist/`;带 `--sign` 时先签名再校验。
+- 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 先补齐三层清单并签名,再校验,最后把分发内容写入 `dist/`;带 `--sign` 时用 `EEC_SECRET_KEY` 为 `plugin.js` 与三层清单签名。
 - 自动化:推送到 main 或手动触发 `build-and-deploy`,依次安装依赖、按清单收录插件、解析根证书、用 `openssl verify` 校验 `eec.pem` 的证书链、用 `EEC_SECRET_KEY` 签名并构建 `dist/`、对 `dist/` 再跑一次完整校验,最后发布到 Pages。
 - 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 online-data 分支拉取。
 - 签名私钥只从 secrets 读取,仓库内不存放任何私钥。

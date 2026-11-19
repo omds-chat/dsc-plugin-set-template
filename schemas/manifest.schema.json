@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/manifest.schema.json",
+  "title": "dsc-plugin-collection-manifest",
+  "description": "合集三层哈希清单。L1 在合集根、L2 在每个作者目录、L3 在每个插件目录,每层一份 manifest.json 与一份 manifest.json.sig,层与层之间互不引用。path 相对清单所在目录,使用正斜杠。",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "清单结构版本,当前固定为 1"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "该层清单的修订号,每层独立。该层文件集合或内容变化时加一,不变时沿用旧值,没有旧清单时从 1 开始。"
+    },
+    "files": {
+      "type": "array",
+      "description": "该层覆盖的文件列表,按 path 升序排列;覆盖范围必须与该层应有的文件严格相等。",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "revision",
+    "files"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "schemaVersion": 1,
+      "revision": 3,
+      "files": [
+        {
+          "path": "datalog.json",
+          "sha512": "afcfac300da944818b02ee1440c8ddccee08d4f0f03068697ea4c0a89c6a6f6301d1c697c58623d0459f54f8a2e6e846f61b172d4aba330529960644457bb305"
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "相对清单所在目录的文件路径,正斜杠分隔;不得是绝对路径,不得出现 . 或 .. 段,不得指向清单自身",
+          "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*//)(?!.*(^|/)\\.{1,2}(/|$))(?!manifest\\.json(\\.sig)?$).+$"
+        },
+        "sha512": {
+          "type": "string",
+          "description": "文件内容的 SHA-512,128 位小写十六进制",
+          "pattern": "^[0-9a-f]{128}$"
+        }
+      },
+      "required": [
+        "path",
+        "sha512"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -2,19 +2,33 @@
 /**
  * 校验合集并生成分发内容。
  *
- * 流程:--sign 时先用 EEC 为每个版本的 meta.json 与 plugin.js 生成 CMS 分离签名,
- * 再校验合集,校验不通过则以非零退出码结束并列出全部问题;
- * 校验通过后把根目录元数据、eec.pem 与 plugins/ 目录复制到输出目录,
+ * 流程:--sign 时先用 EEC 为每个版本的 plugin.js 生成 CMS 分离签名,
+ * 再生成三层哈希清单(L1 合集根、L2 作者目录、L3 插件目录)并逐层签名,
+ * 然后校验合集,校验不通过则以非零退出码结束并列出全部问题;
+ * 校验通过后把根目录元数据、三层清单、eec.pem 与 plugins/ 目录复制到输出目录,
  * 并写入 build-info.json 作为分发索引。根证书不进 dist,由 online-data 分发。
+ *
+ * revision 语义:该层文件集合与哈希都没变时沿用旧 revision,有变化时加一,
+ * 没有旧清单时从 1 开始。旧清单从该层目录现有的 manifest.json 读取。
  *
  * 用法:
  *   node scripts/build-collection.mjs --dir . --root-ca root_ca.crt --out dist
  *   EEC_SECRET_KEY=... node scripts/build-collection.mjs --dir . --root-ca root_ca.crt --sign --out dist
  *   node scripts/build-collection.mjs --dir template --allow-placeholder-eec --out dist
  */
+import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import { formatProblems, resolveRootCaPath, verifyCollection } from './lib/collection-verify.mjs'
+import {
+  LAYER1_FILES,
+  LAYER2_FILES,
+  LAYER3_FILES,
+  MANIFEST_FILE,
+  MANIFEST_SCHEMA_VERSION,
+  formatProblems,
+  resolveRootCaPath,
+  verifyCollection,
+} from './lib/collection-verify.mjs'
 import {
   EEC_CERT_FILE,
   VERSION_SIGNED_FILES,
@@ -23,9 +37,11 @@ import {
   requireOpenssl,
   resolveKeyFile,
   signFileCms,
+  signManifest,
 } from './pki.mjs'
 
-const ROOT_DIST_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json', 'tags.json']
+/** 分发内容里的合集根文件。三层清单与签名一并分发,签名针对拷贝后的字节依然有效 */
+const ROOT_DIST_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json', 'tags.json', MANIFEST_FILE, MANIFEST_FILE + '.sig']
 
 function usage() {
   process.stdout.write([
@@ -126,27 +142,49 @@ function listVersionDirs(root) {
   return found
 }
 
-/**
- * 用 EEC 为每个版本的 meta.json 与 plugin.js 生成 CMS 分离签名。
- * 私钥与 eec.pem 不配对时直接失败,避免产出一批无法验签的签名。
- */
-function signCollection(root, options, problems) {
+function isObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 列出目录下的子目录名,按字典序排序;目录不存在时返回空数组。 */
+function listDirectoryNames(dir) {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+}
+
+/** 读取 versions.json 的版本列表,读不到时返回空数组。 */
+function readVersionList(path) {
+  if (!existsSync(path)) return []
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    const list = Array.isArray(data?.versions) ? data.versions : []
+    return list.filter((item) => typeof item === 'string')
+  } catch {
+    return []
+  }
+}
+
+/** 解析 EEC 私钥并确认与仓库内 eec.pem 配对。不配对时直接失败,避免产出一批无法验签的签名。 */
+function prepareSigner(root, problems) {
   const source = process.env.EEC_SECRET_KEY
   if (!source) {
     problems.push(problem('error', 'SIGN_KEY_MISSING', '启用 --sign 时需要环境变量 EEC_SECRET_KEY(P-256 私钥 PEM 或路径)', null))
-    return
+    return null
   }
   const eecPath = join(root, EEC_CERT_FILE)
   if (!existsSync(eecPath)) {
     problems.push(problem('error', 'EEC_MISSING', '根目录缺少 ' + EEC_CERT_FILE + ',无法签名', EEC_CERT_FILE))
-    return
+    return null
   }
   let keyFile
   try {
     keyFile = resolveKeyFile(source, 'EEC_SECRET_KEY')
   } catch (error) {
     problems.push(problem('error', 'SIGN_KEY_INVALID', 'EEC 私钥不可用:' + error.message, null))
-    return
+    return null
   }
   try {
     if (!certMatchesKey(eecPath, keyFile.path)) {
@@ -158,26 +196,133 @@ function signCollection(root, options, problems) {
           EEC_CERT_FILE,
         ),
       )
-      return
+      keyFile.cleanup()
+      return null
     }
-    for (const { versionDir, version } of listVersionDirs(root)) {
-      for (const name of VERSION_SIGNED_FILES) {
-        const filePath = join(versionDir, name)
-        if (!existsSync(filePath)) {
-          problems.push(problem('error', 'SIGN_TARGET_MISSING', '版本 ' + version + ' 缺少待签名文件 ' + name, filePath))
-          continue
-        }
-        try {
-          signFileCms(filePath, eecPath, keyFile.path)
-          problems.push(problem('warning', 'SIGNED', '已用 EEC 为 ' + version + '/' + name + ' 生成 CMS 签名', filePath + '.sig'))
-        } catch (error) {
-          problems.push(problem('error', 'SIGN_FAILED', '为 ' + version + '/' + name + ' 签名失败:' + error.message, filePath))
-        }
+  } catch (error) {
+    problems.push(problem('error', 'SIGN_KEY_INVALID', 'EEC 私钥不可用:' + error.message, null))
+    keyFile.cleanup()
+    return null
+  }
+  return { eecPath, keyFile, cleanup: () => keyFile.cleanup() }
+}
+
+/** 用 EEC 为每个版本的 plugin.js 生成 CMS 分离签名。meta.json 由 L3 清单覆盖,不再单独签名。 */
+function signVersionFiles(root, signer, problems) {
+  for (const { versionDir, version } of listVersionDirs(root)) {
+    for (const name of VERSION_SIGNED_FILES) {
+      const filePath = join(versionDir, name)
+      if (!existsSync(filePath)) {
+        problems.push(problem('error', 'SIGN_TARGET_MISSING', '版本 ' + version + ' 缺少待签名文件 ' + name, filePath))
+        continue
+      }
+      try {
+        signFileCms(filePath, signer.eecPath, signer.keyFile.path)
+        problems.push(problem('warning', 'SIGNED', '已用 EEC 为 ' + version + '/' + name + ' 生成 CMS 签名', filePath + '.sig'))
+      } catch (error) {
+        problems.push(problem('error', 'SIGN_FAILED', '为 ' + version + '/' + name + ' 签名失败:' + error.message, filePath))
       }
     }
-  } finally {
-    keyFile.cleanup()
   }
+}
+
+/** 计算文件的 SHA-512,小写十六进制。 */
+function sha512Of(path) {
+  return createHash('sha512').update(readFileSync(path)).digest('hex')
+}
+
+/** 把层目录内的相对路径列表转成清单条目,按 path 字典序排列,只收实际存在的普通文件。 */
+function layerEntries(layerDir, relativePaths) {
+  const entries = []
+  for (const rel of relativePaths) {
+    const filePath = join(layerDir, ...rel.split('/'))
+    if (!existsSync(filePath)) continue
+    if (!statSync(filePath).isFile()) continue
+    entries.push({ path: rel, sha512: sha512Of(filePath) })
+  }
+  entries.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+  return entries
+}
+
+/** 读取该层现有的旧清单,只用于沿用 revision;读不到或结构不对时返回 null。 */
+function readPreviousManifest(layerDir) {
+  const path = join(layerDir, MANIFEST_FILE)
+  if (!existsSync(path)) return null
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    return isObject(data) && Array.isArray(data.files) ? data : null
+  } catch {
+    return null
+  }
+}
+
+/** 旧清单记录的文件集合与哈希是否与新算出的完全一致。 */
+function sameEntries(previous, entries) {
+  if (!previous) return false
+  if (previous.files.length !== entries.length) return false
+  const recorded = new Map()
+  for (const item of previous.files) {
+    if (isObject(item) && typeof item.path === 'string') recorded.set(item.path, item.sha512)
+  }
+  return entries.every((item) => recorded.get(item.path) === item.sha512)
+}
+
+/**
+ * 写一层清单并按需签名。
+ * revision:文件集合与哈希都没变时沿用旧值,有变化时加一,没有旧清单时从 1 开始。
+ * 没有可用私钥时,内容一旦变化就删掉失效的旧签名,避免分发一份必然验不过的清单。
+ */
+function writeLayerManifest({ layer, layerRel, layerDir, entries, signer, problems }) {
+  const previous = readPreviousManifest(layerDir)
+  const unchanged = sameEntries(previous, entries)
+  const previousRevision = previous && Number.isInteger(previous.revision) && previous.revision > 0 ? previous.revision : null
+  let revision = 1
+  if (previousRevision !== null) revision = unchanged ? previousRevision : previousRevision + 1
+  const manifest = { schemaVersion: MANIFEST_SCHEMA_VERSION, revision, files: entries }
+  const manifestPath = join(layerDir, MANIFEST_FILE)
+  const text = JSON.stringify(manifest, null, 2) + '\n'
+  const previousText = existsSync(manifestPath) ? readFileSync(manifestPath, 'utf8') : null
+  const changed = previousText !== text
+  if (changed) writeFileSync(manifestPath, text, 'utf8')
+  const rel = layerRel ? layerRel + '/' + MANIFEST_FILE : MANIFEST_FILE
+  const sigPath = manifestPath + '.sig'
+  if (signer) {
+    try {
+      signManifest(manifestPath, signer.eecPath, signer.keyFile.path)
+      problems.push(problem('warning', 'MANIFEST_SIGNED', layer + ' 清单已签名:' + rel, rel + '.sig'))
+    } catch (error) {
+      problems.push(problem('error', 'MANIFEST_SIGN_FAILED', layer + ' 清单签名失败:' + error.message, rel))
+    }
+  } else if (changed && existsSync(sigPath)) {
+    rmSync(sigPath, { force: true })
+    problems.push(
+      problem('warning', 'MANIFEST_SIG_REMOVED', layer + ' 清单内容已变化,已删除失效的 ' + rel + '.sig;请用 --sign 重新签名', rel + '.sig'),
+    )
+  }
+  return { layer, dir: layerRel || '.', revision, files: entries.length, changed }
+}
+
+/** 生成三层清单:L1 合集根、L2 每个作者目录、L3 每个插件目录,互不引用。 */
+function buildManifests(root, signer, problems) {
+  const layers = [{ layer: 'L1', layerRel: '', layerDir: root, files: LAYER1_FILES }]
+  const pluginsDir = join(root, 'plugins')
+  for (const author of listDirectoryNames(pluginsDir)) {
+    const authorDir = join(pluginsDir, author)
+    const authorRel = 'plugins/' + author
+    layers.push({ layer: 'L2', layerRel: authorRel, layerDir: authorDir, files: LAYER2_FILES })
+    for (const plugin of listDirectoryNames(authorDir)) {
+      const pluginDir = join(authorDir, plugin)
+      const files = [...LAYER3_FILES]
+      for (const version of readVersionList(join(pluginDir, 'versions.json'))) files.push(version + '/meta.json')
+      layers.push({ layer: 'L3', layerRel: authorRel + '/' + plugin, layerDir: pluginDir, files })
+    }
+  }
+  const summaries = []
+  for (const layer of layers) {
+    const entries = layerEntries(layer.layerDir, layer.files)
+    summaries.push(writeLayerManifest({ ...layer, entries, signer, problems }))
+  }
+  return summaries
 }
 
 function copyTree(srcDir, destDir) {
@@ -290,7 +435,14 @@ function main() {
   const outDir = resolve(options.out)
   const problems = []
 
-  if (options.sign) signCollection(root, options, problems)
+  const signer = options.sign ? prepareSigner(root, problems) : null
+  let manifests = []
+  try {
+    if (signer) signVersionFiles(root, signer, problems)
+    manifests = buildManifests(root, signer, problems)
+  } finally {
+    if (signer) signer.cleanup()
+  }
 
   const rootCaPath = resolveRootCaPath(options)
   const result = verifyCollection(root, {
@@ -308,6 +460,14 @@ function main() {
     return 1
   }
 
+  for (const item of manifests) {
+    process.stdout.write(
+      item.layer + ' 清单 ' + item.dir + '/' + MANIFEST_FILE +
+      ' revision=' + item.revision +
+      ',覆盖 ' + item.files + ' 个文件' +
+      (item.changed ? '(已更新)' : '(未变化)') + '\n',
+    )
+  }
   const dist = writeDist(root, outDir, result.collectionName)
   process.stdout.write(
     '合集 ' + result.collectionName + ' 校验通过:' +

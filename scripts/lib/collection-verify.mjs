@@ -1,19 +1,25 @@
 /**
  * 合集自洽性校验(PKI 版)。
  *
- * 校验对象是分发规范 v2 的合集目录结构:根目录的终端签名证书、作者公钥、插件清单、
- * 版本目录与逐文件 CMS 签名。只读取文件,不修改任何内容;
+ * 校验对象是分发规范 v2 的合集目录结构:根目录的终端签名证书、三层哈希清单、
+ * 作者公钥、插件清单、版本目录与逐文件 CMS 签名。只读取文件,不修改任何内容;
  * build-collection.mjs 与 verify-collection.mjs 共用本模块。
+ *
+ * 三层清单互相独立,不做收束:L1 在合集根,L2 在每个作者目录,L3 在每个插件目录,
+ * 每层一份 manifest.json 与一份 manifest.json.sig,只覆盖本层目录内的文件。
  *
  * 校验语义(见 .agents/signing-conventions.md 第六节):本脚本是发布前的强校验,
  * 任一项失败都以非零退出码结束;插件市场一侧的同类校验失败只警告,不阻断。
  */
-import { readFileSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import {
   AUTHOR_PUB_FILE,
   EEC_CERT_FILE,
+  MANIFEST_FILE,
   ROOT_CA_FILE,
+  VERSION_AUTHOR_SIGNED_FILES,
   VERSION_SIGNED_FILES,
   authorSignaturePath,
   cmsSignaturePath,
@@ -26,15 +32,27 @@ import {
 } from '../pki.mjs'
 
 /** 合集根目录必需的文件 */
-export const ROOT_REQUIRED_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json']
-/** 版本目录内必需的文件,含两份 CMS 签名 */
-export const VERSION_REQUIRED_FILES = ['meta.json', 'meta.json.sig', 'plugin.js', 'plugin.js.sig']
+export const ROOT_REQUIRED_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json', 'tags.json']
+/** 版本目录内必需的文件。meta.json.sig 已取消,产物本体只由 plugin.js.sig 签名 */
+export const VERSION_REQUIRED_FILES = ['meta.json', 'plugin.js', 'plugin.js.sig']
 /** 作者目录内的公钥文件名 */
 export const AUTHOR_PUB_RELATIVE = AUTHOR_PUB_FILE
 /** 根证书文件名,仅用于报错提示,合集本身不存放根证书 */
 export const ROOT_CA_RELATIVE = ROOT_CA_FILE
+/** 清单签名后缀,清单签名路径即 <清单>.sig */
+export const MANIFEST_SIGNATURE_SUFFIX = '.sig'
+/** 清单结构版本,与 schemas/manifest.schema.json 保持一致 */
+export const MANIFEST_SCHEMA_VERSION = 1
+/** L1 覆盖的文件,相对合集根 */
+export const LAYER1_FILES = ['datalog.json', 'meta.json', 'plugins/author_manifest.json', 'tags.json']
+/** L2 覆盖的文件,相对作者目录。author_pub.pem 缺失时按既有规则降级为警告,清单只覆盖实际存在的文件 */
+export const LAYER2_FILES = ['author_pub.pem', 'plugin_manifest.json']
+/** L3 固定覆盖的文件,相对插件目录;其余覆盖项是每个版本的 meta.json */
+export const LAYER3_FILES = ['versions.json']
+/** L3 明确不覆盖的产物本体,由每版本的 plugin.js.sig 独立签名 */
+export const LAYER3_EXCLUDED_FILES = ['plugin.js', 'plugin.js.sig']
 
-export { VERSION_SIGNED_FILES }
+export { MANIFEST_FILE, VERSION_SIGNED_FILES, VERSION_AUTHOR_SIGNED_FILES }
 
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const PLUGIN_NAME_PATTERN = /^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*\/dsc-[a-z0-9][a-z0-9._-]*)$/
@@ -79,6 +97,250 @@ function parseJsonFile(path, label, report) {
   }
 }
 
+const SHA512_PATTERN = /^[0-9a-f]{128}$/
+
+/** 计算文件的 SHA-512,小写十六进制。 */
+function sha512Hex(path) {
+  return createHash('sha512').update(readFileSync(path)).digest('hex')
+}
+
+/** 列出目录下的子目录名,按字典序排序;目录不存在时返回空数组。 */
+function listDirectoryNames(dir) {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/** 读取 versions.json 的版本列表,读不到时返回空数组。 */
+function readVersionList(path) {
+  if (!isFile(path)) return []
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    const list = Array.isArray(data?.versions) ? data.versions : []
+    return list.filter((item) => typeof item === 'string')
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 校验清单条目里的相对路径:必须是相对清单所在目录的正斜杠路径,
+ * 不得是绝对路径,不得出现 . 或 .. 段,不得指向清单自身及其签名。
+ * @param {string} rel 清单条目里的 path
+ * @returns {string|null} 不合法时返回原因,合法返回 null
+ */
+export function manifestPathProblem(rel) {
+  if (typeof rel !== 'string' || rel.length === 0) return 'path 必须是非空字符串'
+  if (rel.includes('\\')) return 'path 必须使用正斜杠'
+  if (rel.startsWith('/') || /^[A-Za-z]:/.test(rel)) return 'path 不得是绝对路径'
+  const segments = rel.split('/')
+  if (segments.some((segment) => segment.length === 0)) return 'path 不得包含空段'
+  if (segments.some((segment) => segment === '.' || segment === '..')) return 'path 不得包含 . 或 .. 段'
+  if (rel === MANIFEST_FILE || rel === MANIFEST_FILE + MANIFEST_SIGNATURE_SUFFIX) return 'path 不得指向清单自身'
+  return null
+}
+
+/**
+ * 校验一层清单:存在性、结构、路径、覆盖范围、文件哈希与签名。
+ * 任何失败都带上层号与具体文件,便于直接定位。
+ * @param {object} context 校验上下文
+ * @returns {void}
+ */
+function verifyLayerManifest(context) {
+  const { layer, layerRel, layerDir, expectedFiles, report, rootCaPath, eecPath, cmsReady, missingLevel, stats } = context
+  const layerLabel = layer + '(' + (layerRel || '.') + ')'
+  const manifestRel = layerRel ? layerRel + '/' + MANIFEST_FILE : MANIFEST_FILE
+  const manifestPath = join(layerDir, MANIFEST_FILE)
+  if (!isFile(manifestPath)) {
+    report[missingLevel]('MANIFEST_MISSING', layerLabel + ' 缺少清单文件 ' + MANIFEST_FILE, manifestRel)
+    return
+  }
+  const manifest = parseJsonFile(manifestPath, layerLabel + ' 清单', report)
+  if (manifest === undefined) return
+  if (!isObject(manifest)) {
+    report.error('MANIFEST_INVALID', layerLabel + ' 清单的顶层必须是对象', manifestRel)
+    return
+  }
+  for (const key of Object.keys(manifest)) {
+    if (key !== 'schemaVersion' && key !== 'revision' && key !== 'files') {
+      report.error('MANIFEST_FIELD_UNKNOWN', layerLabel + ' 清单含未知字段 ' + key, manifestRel)
+    }
+  }
+  if (manifest.schemaVersion !== MANIFEST_SCHEMA_VERSION) {
+    report.error(
+      'MANIFEST_SCHEMA_VERSION',
+      layerLabel + ' 清单的 schemaVersion 必须是 ' + MANIFEST_SCHEMA_VERSION + ',实际为 ' + JSON.stringify(manifest.schemaVersion),
+      manifestRel,
+    )
+  }
+  if (!Number.isInteger(manifest.revision) || manifest.revision < 1) {
+    report.error(
+      'MANIFEST_REVISION_INVALID',
+      layerLabel + ' 清单的 revision 必须是正整数,实际为 ' + JSON.stringify(manifest.revision),
+      manifestRel,
+    )
+  }
+  if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
+    report.error('MANIFEST_FILES_INVALID', layerLabel + ' 清单的 files 必须是非空数组', manifestRel)
+    return
+  }
+
+  const covered = new Map()
+  for (const [index, item] of manifest.files.entries()) {
+    const itemLabel = layerLabel + ' 清单第 ' + index + ' 项'
+    if (!isObject(item)) {
+      report.error('MANIFEST_ENTRY_INVALID', itemLabel + ' 必须是对象', manifestRel)
+      continue
+    }
+    for (const key of Object.keys(item)) {
+      if (key !== 'path' && key !== 'sha512') {
+        report.error('MANIFEST_FIELD_UNKNOWN', itemLabel + ' 含未知字段 ' + key, manifestRel)
+      }
+    }
+    const pathProblem = manifestPathProblem(item.path)
+    if (pathProblem) {
+      report.error('MANIFEST_PATH_INVALID', itemLabel + ' 的 path 不合法:' + pathProblem + '(' + JSON.stringify(item.path) + ')', manifestRel)
+      continue
+    }
+    if (typeof item.sha512 !== 'string' || !SHA512_PATTERN.test(item.sha512)) {
+      report.error('MANIFEST_HASH_INVALID', itemLabel + ' 的 sha512 必须是 128 位小写十六进制', manifestRel)
+      continue
+    }
+    if (covered.has(item.path)) {
+      report.error('MANIFEST_PATH_DUPLICATE', layerLabel + ' 清单中 ' + item.path + ' 重复出现', manifestRel)
+      continue
+    }
+    covered.set(item.path, item.sha512)
+  }
+
+  // 覆盖范围:该层该有的文件都在清单里,清单里没有多余项
+  const expected = new Set(expectedFiles)
+  for (const rel of expected) {
+    const filePath = join(layerDir, ...rel.split('/'))
+    const fileRel = layerRel ? layerRel + '/' + rel : rel
+    if (!isFile(filePath)) {
+      report.error('LAYER_FILE_MISSING', layerLabel + ' 缺少必需文件 ' + rel, fileRel)
+      continue
+    }
+    if (!covered.has(rel)) {
+      report.error('MANIFEST_FILE_MISSING', layerLabel + ' 清单缺少文件 ' + rel, manifestRel)
+    }
+  }
+  for (const rel of covered.keys()) {
+    if (expected.has(rel)) continue
+    const fileRel = layerRel ? layerRel + '/' + rel : rel
+    if (layer === 'L3' && LAYER3_EXCLUDED_FILES.includes(rel)) {
+      report.error('MANIFEST_FILE_EXTRA', layerLabel + ' 清单不得覆盖 ' + rel + ':产物本体由该版本的 plugin.js.sig 独立签名', fileRel)
+    } else {
+      report.error('MANIFEST_FILE_EXTRA', layerLabel + ' 清单包含多余项 ' + rel, fileRel)
+    }
+  }
+
+  // 哈希:逐文件比对 SHA-512
+  let mismatched = 0
+  for (const [rel, expectedHash] of covered) {
+    if (!expected.has(rel)) continue
+    const filePath = join(layerDir, ...rel.split('/'))
+    if (!isFile(filePath)) continue
+    const fileRel = layerRel ? layerRel + '/' + rel : rel
+    let actual = null
+    try {
+      actual = sha512Hex(filePath)
+    } catch (error) {
+      report.error('MANIFEST_HASH_UNREADABLE', layerLabel + ' 无法读取 ' + rel + ':' + error.message, fileRel)
+      continue
+    }
+    if (actual !== expectedHash) {
+      mismatched += 1
+      report.error('MANIFEST_HASH_MISMATCH', layerLabel + ' 清单记录的 ' + rel + ' 与文件实际 SHA-512 不一致', fileRel)
+    }
+  }
+
+  // 签名
+  const sigPath = manifestPath + MANIFEST_SIGNATURE_SUFFIX
+  const sigRel = manifestRel + MANIFEST_SIGNATURE_SUFFIX
+  if (!isFile(sigPath)) {
+    report[missingLevel]('MANIFEST_SIGNATURE_MISSING', layerLabel + ' 缺少清单签名 ' + MANIFEST_FILE + MANIFEST_SIGNATURE_SUFFIX, sigRel)
+  } else if (!cmsReady) {
+    report.warn('SIGN_UNVERIFIABLE', sigRel + ' 无法校验,缺少根证书或 ' + EEC_CERT_FILE, sigRel)
+  } else {
+    const result = verifyFileCms(manifestPath, sigPath, rootCaPath, eecPath)
+    if (!result.ok) {
+      report.error('MANIFEST_SIGNATURE_INVALID', layerLabel + ' 清单签名校验失败:' + String(result.reason), sigRel)
+    }
+  }
+
+  stats.manifests.push({
+    layer,
+    dir: layerRel || '.',
+    revision: Number.isInteger(manifest.revision) ? manifest.revision : null,
+    files: covered.size,
+    mismatched,
+  })
+}
+
+/**
+ * 校验三层清单。L1 在合集根,L2 在每个作者目录,L3 在每个插件目录,层与层之间不互相引用,
+ * 因此任何一层都可以单独校验、单独重签。
+ * @param {object} context 校验上下文
+ * @returns {void}
+ */
+function verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, allowMissingManifest }) {
+  const missingLevel = allowMissingManifest ? 'warn' : 'error'
+  verifyLayerManifest({
+    layer: 'L1',
+    layerRel: '',
+    layerDir: root,
+    expectedFiles: LAYER1_FILES,
+    report,
+    rootCaPath,
+    eecPath,
+    cmsReady,
+    missingLevel,
+    stats,
+  })
+  const pluginsDir = join(root, 'plugins')
+  for (const author of listDirectoryNames(pluginsDir)) {
+    const authorDir = join(pluginsDir, author)
+    const authorRel = 'plugins/' + author
+    const authorFiles = LAYER2_FILES.filter((name) => isFile(join(authorDir, name)))
+    verifyLayerManifest({
+      layer: 'L2',
+      layerRel: authorRel,
+      layerDir: authorDir,
+      expectedFiles: authorFiles,
+      report,
+      rootCaPath,
+      eecPath,
+      cmsReady,
+      missingLevel,
+      stats,
+    })
+    for (const plugin of listDirectoryNames(authorDir)) {
+      const pluginDir = join(authorDir, plugin)
+      const files = [...LAYER3_FILES]
+      for (const version of readVersionList(join(pluginDir, 'versions.json'))) files.push(version + '/meta.json')
+      verifyLayerManifest({
+        layer: 'L3',
+        layerRel: authorRel + '/' + plugin,
+        layerDir: pluginDir,
+        expectedFiles: files,
+        report,
+        rootCaPath,
+        eecPath,
+        cmsReady,
+        missingLevel,
+        stats,
+      })
+    }
+  }
+}
+
 /**
  * 解析根证书路径。优先级:显式参数 --root-ca > 环境变量 ROOT_CA_PATH。
  * @param {object} [options] 含 rootCa 字段
@@ -103,7 +365,7 @@ export function resolveRootCaPath(options = {}, env = process.env) {
 export function verifyCollection(collectionDir, options = {}) {
   const root = resolve(collectionDir)
   const problems = []
-  const stats = { authors: 0, plugins: 0, versions: 0 }
+  const stats = { authors: 0, plugins: 0, versions: 0, manifests: [] }
   const report = {
     error(code, message, path) {
       problems.push({ level: 'error', code, message, path: path ?? null })
@@ -113,6 +375,8 @@ export function verifyCollection(collectionDir, options = {}) {
     },
   }
   const skeleton = options.allowPlaceholderEec === true
+  // 骨架模式与 --allow-missing-manifest 都把「清单尚未生成」降级为警告,结构与哈希检查照常执行。
+  const allowMissingManifest = options.allowMissingManifest === true || skeleton
   const collectionName = options.collectionName || basename(root)
   const rootCaPath = options.rootCaPath ? resolve(options.rootCaPath) : null
   const eecPath = join(root, EEC_CERT_FILE)
@@ -324,6 +588,10 @@ export function verifyCollection(collectionDir, options = {}) {
   }
 
   for (const context of authorCache.values()) stats.authors += 1
+
+  // 八、三层哈希清单
+  verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, allowMissingManifest })
+
   return finish()
 }
 
@@ -450,6 +718,7 @@ function inspectVersionMeta({ versionDir, versionRel, version, pluginName, repor
 }
 
 function inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, eecPath, cmsReady, authorPubPath, authorPubRel, authorPubUsable, author }) {
+  // 合集 CMS 签名:版本目录只剩 plugin.js.sig,meta.json 由 L3 清单覆盖
   for (const name of VERSION_SIGNED_FILES) {
     const filePath = join(versionDir, name)
     if (!isFile(filePath)) continue
@@ -465,10 +734,15 @@ function inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, 
         report.error('SIGN_VERIFY_FAILED', rel + '.sig 校验失败,文件内容可能已被篡改:' + String(result.reason), rel + '.sig')
       }
     }
+  }
 
+  // 作者分离签名:可选,存在即必须能验通
+  for (const name of VERSION_AUTHOR_SIGNED_FILES) {
+    const filePath = join(versionDir, name)
+    if (!isFile(filePath)) continue
     const authorSigPath = authorSignaturePath(filePath)
     if (!isFile(authorSigPath)) continue
-    const authorRel = rel + '.author.sig'
+    const authorRel = versionRel + '/' + name + '.author.sig'
     if (!authorPubUsable) {
       report.error(
         'AUTHOR_PUB_MISSING',

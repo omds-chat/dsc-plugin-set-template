@@ -33,8 +33,12 @@ export const EEC_CSR_FILE = 'eec.csr'
 export const AUTHOR_KEY_FILE = 'author_secret.pem'
 /** 作者公钥文件名,随合集分发 */
 export const AUTHOR_PUB_FILE = 'author_pub.pem'
-/** 版本目录内必须由 EEC 签名的文件 */
-export const VERSION_SIGNED_FILES = ['meta.json', 'plugin.js']
+/** 版本目录内必须由 EEC 签名的文件。meta.json 改由 L3 清单覆盖,不再单独签名 */
+export const VERSION_SIGNED_FILES = ['plugin.js']
+/** 版本目录内允许携带作者分离签名的文件,存在 <文件>.author.sig 时用作者公钥校验 */
+export const VERSION_AUTHOR_SIGNED_FILES = ['meta.json', 'plugin.js']
+/** 三层清单的文件名,每层目录一份 manifest.json 与一份 manifest.json.sig */
+export const MANIFEST_FILE = 'manifest.json'
 /** 需要的最低 OpenSSL 主版本号 */
 export const MIN_OPENSSL_MAJOR = 3
 
@@ -54,6 +58,11 @@ export class PkiError extends Error {
 /** 文件的 CMS 分离签名路径,即 <文件>.sig */
 export function cmsSignaturePath(filePath) {
   return filePath + '.sig'
+}
+
+/** 清单的 CMS 分离签名路径,即 <清单>.sig */
+export function manifestSignaturePath(manifestPath) {
+  return manifestPath + '.sig'
 }
 
 /** 文件的作者分离签名路径,即 <文件>.author.sig */
@@ -265,6 +274,7 @@ export function issueEec(csrPath, rootCertPath, rootKeyPath, outPath, options = 
  * 用 EEC 对文件生成 CMS 分离签名,输出到 <文件>.sig。
  * 固定加 -binary:签名与验签都按原始字节处理,不经换行规范化,
  * 与作者裸公钥签名(pkeyutl -rawin)的逐字节语义保持一致。
+ * 固定加 -md sha512:签名与验签的摘要算法一致,不依赖 OpenSSL 的默认摘要。
  * 固定加 -outform DER:默认的 S/MIME multipart/signed 包装浏览器无法解析,
  * 而插件市场要在浏览器里验签,因此 DER 是跨仓库统一格式,验签方必须带 -inform DER。
  * @param {string} filePath 待签名文件
@@ -280,7 +290,7 @@ export function signFileCms(filePath, eecCertPath, eecKeyPath, options = {}) {
   requireFile(eecKeyPath, 'EEC 私钥')
   const sigPath = options.out || cmsSignaturePath(filePath)
   ensureDirFor(sigPath)
-  run(['cms', '-sign', '-binary', '-outform', 'DER', '-in', filePath, '-out', sigPath, '-signer', eecCertPath, '-inkey', eecKeyPath, '-nocerts', '-noattr'])
+  run(['cms', '-sign', '-binary', '-md', 'sha512', '-outform', 'DER', '-in', filePath, '-out', sigPath, '-signer', eecCertPath, '-inkey', eecKeyPath, '-nocerts', '-noattr'])
   return requireOutput(sigPath, 'CMS 签名')
 }
 
@@ -300,11 +310,43 @@ export function verifyFileCms(filePath, sigPath, rootCertPath, eecCertPath) {
   if (!existsSync(rootCertPath)) return { ok: false, reason: '根证书不存在:' + rootCertPath }
   if (!existsSync(eecCertPath)) return { ok: false, reason: 'EEC 证书不存在:' + eecCertPath }
   const result = run(
-    ['cms', '-verify', '-binary', '-inform', 'DER', '-in', sigPath, '-content', filePath, '-CAfile', rootCertPath, '-certfile', eecCertPath],
+    ['cms', '-verify', '-binary', '-md', 'sha512', '-inform', 'DER', '-in', sigPath, '-content', filePath, '-CAfile', rootCertPath, '-certfile', eecCertPath],
     { allowFailure: true },
   )
   if (result.ok) return { ok: true, reason: null }
   return { ok: false, reason: head(result.stderr || result.stdout, 2) || 'openssl cms -verify 失败' }
+}
+
+/**
+ * 为清单文件生成 CMS 分离签名,结果写到 <清单>.sig。
+ * 三层清单(L1 合集根、L2 作者目录、L3 插件目录)各签一次,签名参数与普通文件完全一致。
+ * @param {string} manifestPath 清单文件,通常是 manifest.json
+ * @param {string} eecCertPath EEC 证书
+ * @param {string} eecKeyPath EEC 私钥
+ * @param {object} [options] out 自定义签名路径
+ * @returns {string} 签名文件路径
+ */
+export function signManifest(manifestPath, eecCertPath, eecKeyPath, options = {}) {
+  if (typeof manifestPath !== 'string' || !manifestPath.endsWith(MANIFEST_FILE)) {
+    throw new PkiError('清单路径必须以 ' + MANIFEST_FILE + ' 结尾:' + String(manifestPath))
+  }
+  return signFileCms(manifestPath, eecCertPath, eecKeyPath, options)
+}
+
+/**
+ * 校验清单文件的 CMS 分离签名。签名产物是 DER,固定带 -inform DER;
+ * 与 verifyFileCms 一样不抛错,统一返回 { ok, reason }。
+ * @param {string} manifestPath 清单文件
+ * @param {string} sigPath 签名文件,通常是 <清单>.sig
+ * @param {string} rootCertPath 根证书
+ * @param {string} eecCertPath EEC 证书
+ * @returns {{ok: boolean, reason: string|null}}
+ */
+export function verifyManifest(manifestPath, sigPath, rootCertPath, eecCertPath) {
+  if (typeof manifestPath !== 'string' || !manifestPath.endsWith(MANIFEST_FILE)) {
+    return { ok: false, reason: '清单路径必须以 ' + MANIFEST_FILE + ' 结尾:' + String(manifestPath) }
+  }
+  return verifyFileCms(manifestPath, sigPath, rootCertPath, eecCertPath)
 }
 
 /**

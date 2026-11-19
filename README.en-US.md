@@ -83,7 +83,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collec
 | Root CA key | ECDSA P-256, native OpenSSL PEM; self-signed certificate with `keyUsage=critical,keyCertSign,cRLSign`,`basicConstraints=critical,CA:TRUE,pathlen:0`, valid for 3650 days. WebCrypto support for P-256 is the broadest, certificate chain validation happens in the browser, and Ed25519 is unavailable on the target browser floor |
 | EEC key | ECDSA P-256, native OpenSSL PEM. The CMS implementation of OpenSSL reports `provider signature failure` for Ed25519, so Ed25519 cannot be used here |
 | EEC certificate | Issued by the root CA, `keyUsage=critical,digitalSignature`,`basicConstraints=critical,CA:FALSE`, valid for 365 days |
-| Collection signature | Detached CMS signature, `openssl cms -sign -binary -outform DER -nocerts -noattr`, stored as `<file>.sig`. Both signing and verification pass `-binary`, so raw bytes are signed without line-ending canonicalisation. The artifact is always DER and verification passes `-inform DER`. DER is the cross-repository format: browsers cannot parse the default S/MIME `multipart/signed` wrapper, and the plugin market verifies signatures in the browser |
+| Collection signature | Detached CMS signature, `openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr`, stored as `<file>.sig`. Both signing and verification pass `-binary`, so raw bytes are signed without line-ending canonicalisation. The artifact is always DER and verification passes `-inform DER`. DER is the cross-repository format: browsers cannot parse the default S/MIME `multipart/signed` wrapper, and the plugin market verifies signatures in the browser |
 | Author signature | Detached bare public key signature, `openssl pkeyutl -sign -rawin` (Ed25519), stored as `<file>.author.sig` |
 
 ### Commands
@@ -106,14 +106,14 @@ openssl x509 -req -in eec.csr -CA root_ca.crt -CAkey root_secret.pem -CAcreatese
   -extfile <(printf 'keyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\n')
 ```
 
-Collection signing and verification:
+Collection signing and verification. The three manifests and `plugin.js` share one command and differ only in the file name:
 
 ```bash
-openssl cms -sign -binary -outform DER -in meta.json -out meta.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
-openssl cms -verify -binary -inform DER -in meta.json.sig -content meta.json -CAfile root_ca.crt -certfile eec.pem
+openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
+openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile eec.pem
 ```
 
-`-outform DER` is not optional. The default output is an S/MIME `multipart/signed` wrapper, which browsers cannot parse, and the plugin market verifies signatures in the browser. DER is therefore the cross-repository format: signers always pass `-outform DER` and verifiers always pass `-inform DER`, and either side falling back to the default format breaks verification. Confirm the artifact with `openssl asn1parse -inform DER -in meta.json.sig`.
+`-md sha512` pins the digest algorithm instead of relying on the OpenSSL default. `-outform DER` is not optional. The default output is an S/MIME `multipart/signed` wrapper, which browsers cannot parse, and the plugin market verifies signatures in the browser. DER is therefore the cross-repository format: signers always pass `-outform DER` and verifiers always pass `-inform DER`, and either side falling back to the default format breaks verification. Confirm the artifact with `openssl asn1parse -inform DER -in manifest.json.sig`.
 
 Author signing and verification:
 
@@ -130,41 +130,91 @@ To enable revocation checking, concatenate the root certificate and the CRL into
 
 ```text
 <collection>/
-├── eec.pem                # end-entity signing certificate, shipped with Pages
-├── meta.json
-├── datalog.json
-├── tags.json
+├── eec.pem                    # end-entity signing certificate, shipped with Pages, covered by no manifest
+├── meta.json                  # L1
+├── datalog.json               # L1
+├── tags.json                  # L1
+├── manifest.json              # L1 manifest
+├── manifest.json.sig          # L1 manifest signature
 └── plugins/
-    ├── author_manifest.json
+    ├── author_manifest.json   # L1
     └── <author>/
-        ├── author_pub.pem        # author public key, OpenSSL PEM, Ed25519
-        ├── plugin_manifest.json
+        ├── author_pub.pem         # L2, author public key, OpenSSL PEM, Ed25519
+        ├── plugin_manifest.json   # L2
+        ├── manifest.json          # L2 manifest
+        ├── manifest.json.sig      # L2 manifest signature
         └── <plugin>/
-            ├── versions.json
+            ├── versions.json      # L3
+            ├── manifest.json      # L3 manifest
+            ├── manifest.json.sig  # L3 manifest signature
             └── <x.y.z>/
-                ├── meta.json
-                ├── meta.json.sig        # collection CMS signature
+                ├── meta.json          # L3
                 ├── plugin.js
-                ├── plugin.js.sig        # collection CMS signature
+                ├── plugin.js.sig        # collection CMS signature, covers the artifact itself
                 └── plugin.js.author.sig # author bare public key signature, optional
 ```
 
+Distribution uses three hash-manifest layers, each with one `manifest.json` and one `manifest.json.sig`:
+
+| Layer | Location | Covered files (relative to the layer directory) |
+|:---:|:---:|:---:|
+| L1 | collection root | `meta.json`, `datalog.json`, `tags.json`, `plugins/author_manifest.json` |
+| L2 | `plugins/<author>/` | `author_pub.pem`, `plugin_manifest.json` |
+| L3 | `plugins/<author>/<plugin>/` | `versions.json`, `<version>/meta.json` |
+
+Manifest format, with the JSON Schema in `schemas/manifest.schema.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "files": [
+    { "path": "datalog.json", "sha512": "<128 lowercase hex characters>" }
+  ]
+}
+```
+
+- `path` is relative to the directory holding the manifest, uses forward slashes, and may not contain `..`, be absolute, or point at the manifest itself.
+- The hash is SHA-512, lowercase hex.
+- `revision` is a positive integer per layer: it increments when the layer's file set or contents change, keeps its value when nothing changed, and starts at 1 without a previous manifest.
+- L3 does not cover `plugin.js` or `plugin.js.sig`: the artifact itself is signed per version by `plugin.js.sig`, and the manifest describes metadata only.
+- `meta.json.sig` is gone: the only collection signature inside a version directory is `plugin.js.sig`, and `plugin.js.author.sig` stays optional.
+
+The three layers are deliberately not folded together: L1 does not reference L2 and L2 does not reference L3, so each layer can be published, verified and re-signed on its own. The trade-off gives up "one check yields a digest of the whole tree" in exchange for per-plugin incremental updates: changing one plugin only increments the L3 `revision`, leaves L2 and L1 untouched, and clients refetch just that layer. Folding the layers into a single root manifest would make every plugin release rewrite the root manifest and force every client to refetch the whole digest.
+
 The old `plugin_secret.pub` and `plugin_set_sign.json` are gone. A collection is trusted because its EEC chains to the root CA, so no separate trust signature is issued. The root certificate is not part of `dist/`: it is distributed through the online-data branch and pinned by fingerprint inside the web client.
 
-## Verification rules
+## Signing and verification
 
-`pnpm verify` checks each item below and exits non-zero with the full problem list if any of them fails. Every problem names its file path.
+### What gets signed
+
+| Signature | Covers | Artifact |
+|:---:|:---:|:---:|
+| Collection CMS signature | one manifest per layer, L1 to L3 | `manifest.json.sig`, one per layer |
+| Collection CMS signature | `plugin.js` of every version | `plugin.js.sig` |
+| Author bare public key signature | `plugin.js`, optional | `plugin.js.author.sig` |
+
+The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr` with the artifact written to `<file>.sig`. `meta.json` is no longer signed separately: the L3 manifest covers it by SHA-512.
+
+### Verification rules
+
+`pnpm verify` checks each item below and exits non-zero with the full problem list if any of them fails. Every problem names its layer and file path.
 
 | # | Rule |
 |:---:|:---:|
 | 1 | `eec.pem` exists in the root, chains to the given root certificate (`--root-ca` or `ROOT_CA_PATH`), is not expired, has `digitalSignature` in `keyUsage` and is not a CA |
 | 2 | Every plugin in `datalog.json` appears in `plugins/<author>/plugin_manifest.json` and its plugin directory exists |
 | 3 | Every plugin directory has `versions.json` and `latest` is present in `versions` |
-| 4 | Every version directory has `meta.json`, `meta.json.sig`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -inform DER -CAfile <root> -certfile eec.pem`; a failure is an error |
+| 4 | Every version directory has `meta.json`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -md sha512 -inform DER -CAfile <root> -certfile eec.pem`; a failure is an error |
 | 5 | When `<file>.author.sig` exists, `plugins/<author>/author_pub.pem` must exist and the signature must verify with `openssl pkeyutl -verify`; a failure is an error |
 | 6 | When `tags.json` exists, every `tag` in `datalog.json` comes from it |
+| 7 | All three manifests exist and are structurally valid: `schemaVersion` is 1, `revision` is a positive integer, `files` is a non-empty array, and each entry holds only `path` and `sha512` |
+| 8 | Every `path` is valid: forward slashes, relative, no `..`, not the manifest itself, no duplicates |
+| 9 | Coverage matches the layer exactly: every required file is listed and nothing extra is, so L3 never lists `plugin.js` or `plugin.js.sig` |
+| 10 | Every recorded SHA-512 matches the file contents, and a mismatch names the layer and the file |
+| 11 | Every `manifest.json.sig` verifies against the root certificate and `eec.pem`; a failure is an error |
 
-`pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: a missing root certificate or an `eec.pem` that does not chain to it becomes a warning. A real collection's CI does not pass that flag.
+`pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: a missing root certificate, an `eec.pem` that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. A real collection's CI does not pass that flag; `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
 
 Verification has two levels. The scripts here are a strict pre-release gate and fail hard. On the plugin market side, certificate chain checks, plugin signature checks and web asset signature checks only warn: they never block and never fall back.
 
@@ -180,6 +230,8 @@ Verification has two levels. The scripts here are a strict pre-release gate and 
 | `issueEec(csr, rootCrt, rootKey, out)` | Issue the EEC certificate, passing extensions through a temporary `--extfile` |
 | `signFileCms(file, eecCrt, eecKey)` | Produce a detached CMS signature as `<file>.sig` |
 | `verifyFileCms(file, sig, rootCrt, eecCrt)` | Verify a detached CMS signature against the root certificate |
+| `signManifest(manifest, eecCrt, eecKey)` | Sign a manifest and write `<manifest>.sig`, same parameters as `signFileCms` |
+| `verifyManifest(manifest, sig, rootCrt, eecCrt)` | Verify a manifest signature |
 | `genAuthorKey(dir)` | Generate an author Ed25519 key pair, returns `{ keyPath, pubPath }` |
 | `signFileAuthor(file, authorKey)` | Produce an author signature as `<file>.author.sig` |
 | `verifyFileAuthor(file, sig, authorPub)` | Verify an author signature |
@@ -189,7 +241,7 @@ Verification has two levels. The scripts here are a strict pre-release gate and 
 
 ## Verification and deployment
 
-- Locally: run `pnpm install`, then `pnpm verify`. `pnpm build` writes distribution content to `dist/` once verification passes; with `--sign` it signs first and then verifies.
+- Locally: run `pnpm install`, then `pnpm verify`. `pnpm build` first materialises and signs the three manifests, then verifies, then writes distribution content to `dist/`; with `--sign` it signs `plugin.js` and the three manifests with `EEC_SECRET_KEY`.
 - Automation: a push to main or a manual `build-and-deploy` run installs dependencies, imports plugins from the manifest, resolves the root certificate, checks the `eec.pem` chain with `openssl verify`, signs with `EEC_SECRET_KEY` and builds `dist/`, runs a full verification on `dist/` and finally publishes to Pages.
 - The root certificate comes from one of two places: `secrets.ROOT_CA_PEM` (PEM text) wins, otherwise `vars.ROOT_CA_URL` is fetched from the online-data branch.
 - Signing keys come from secrets only. No private key is ever stored in the repository.
