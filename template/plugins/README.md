@@ -22,7 +22,7 @@
 `plugins/<author>/<plugin>/`
 
 - 目录名取插件 npm 包名去掉命名空间前缀,例如 `@alice/dsc-demo` 写作 `dsc-demo`,因此目录名必然以 `dsc-` 开头。
-- 插件名必须带 `dsc-` 前缀:全局包为 `dsc-xxx`,命名空间包为 `@scope/dsc-xxx`。插件目录索引 `plugins.json` 的 `plugin_name` 与 `plugin_manifest.json` 的每一项都按 `scripts/lib/collection-verify.mjs` 的 `PLUGIN_NAME_PATTERN` 校验,缺前缀时 `pnpm verify` 分别报 `PLUGINS_INVALID`、`PLUGIN_MANIFEST_INVALID`。
+- 插件名必须带 `dsc-` 前缀:全局包为 `dsc-xxx`,命名空间包为 `@scope/dsc-xxx`。插件目录索引 `plugins.json` 的 `plugin_name` 与 `plugin_manifest.json` 的每一项都按 `scripts/lib/collection-verify.mjs` 的 `PLUGIN_NAME_PATTERN` 校验,缺前缀时 `pnpm verify` 分别报 `PLUGINS_INDEX_INVALID`、`PLUGIN_MANIFEST_INVALID`。
 - 目录内必需 `versions.json`:
 
 ```json

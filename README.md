@@ -238,8 +238,8 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | 9 | 覆盖范围与该层应有的文件严格相等:该有的都在清单里,清单里没有多余项,L3 不得出现 `plugin.js` 与 `plugin.js.sig` |
 | 10 | 清单记录的每个 SHA-512 与文件实际内容一致,不一致时报出层号与具体文件 |
 | 11 | 每层 `manifest.json.sig` 用根证书与终端签名证书验签,失败即报错 |
-| 12 | 作者目录名、`plugins.json` 的 `author` 与 `plugins/author_manifest.json` 的 `username` 都必须是合法的 GitHub 用户名,正则 `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`,不区分大小写,长度上限 39,不得以连字符开头或结尾。目录名不符报 `AUTHOR_DIR_NAME_INVALID` 并指出 `plugins/<目录>`;`author` 与 `username` 不符分别报 `PLUGINS_INVALID`、`AUTHOR_MANIFEST_INVALID` |
-| 13 | 插件名必须带 `dsc-` 前缀。`plugins.json` 的 `plugin_name` 与 `plugins/<作者>/plugin_manifest.json` 的每一项都按 `PLUGIN_NAME_PATTERN` 校验,即 `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`,缺前缀报 `PLUGINS_INVALID` 或 `PLUGIN_MANIFEST_INVALID` |
+| 12 | 作者目录名、`plugins.json` 的 `author` 与 `plugins/author_manifest.json` 的 `username` 都必须是合法的 GitHub 用户名,正则 `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`,不区分大小写,长度上限 39,不得以连字符开头或结尾。目录名不符报 `AUTHOR_DIR_NAME_INVALID` 并指出 `plugins/<目录>`;`author` 与 `username` 不符分别报 `PLUGINS_INDEX_INVALID`、`AUTHOR_MANIFEST_INVALID` |
+| 13 | 插件名必须带 `dsc-` 前缀。`plugins.json` 的 `plugin_name` 与 `plugins/<作者>/plugin_manifest.json` 的每一项都按 `PLUGIN_NAME_PATTERN` 校验,即 `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`,缺前缀报 `PLUGINS_INDEX_INVALID` 或 `PLUGIN_MANIFEST_INVALID` |
 
 `pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:根证书缺失、终端签名证书未由根 CA 签发、三层清单或清单签名尚未生成时降级为警告。真实合集的 CI 不带这个开关;`--allow-missing-manifest` 只放开清单与清单签名缺失,结构与哈希检查照常执行。
 

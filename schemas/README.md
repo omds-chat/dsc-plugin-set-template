@@ -8,7 +8,7 @@
 |:---:|:---:|:---:|:---:|:---:|
 | `manifest.schema.json` | `manifest.json` | L1 合集根、L2 `plugins/<作者>/`、L3 `plugins/<作者>/<插件>/` | `scripts/build-collection.mjs` 的 `buildManifests` → `writeLayerManifest` | 校验规则 7、8、9;`scripts/lib/collection-verify.mjs` 的 `verifyLayerManifest` 与 `manifestPathProblem` |
 | `collection-meta.schema.json` | `meta.json` | 合集根 | 无脚本生成,`template/meta.json` 提供初值,`build-collection.mjs` 只做拷贝 | 校验规则表未单列;`verifyCollection` 第二节,错误码 `META_FIELD_INVALID` |
-| `plugins.schema.json` | `plugins.json` | 合集根,插件目录索引 | `scripts/import-plugins.mjs` 的 `planPluginsIndex` | 校验规则 2、6;`verifyCollection` 第五节,错误码 `PLUGINS_INVALID`、`PLUGINS_DUPLICATE`、`TAG_NOT_DECLARED` |
+| `plugins.schema.json` | `plugins.json` | 合集根,插件目录索引 | `scripts/import-plugins.mjs` 的 `planPluginsIndex` | 校验规则 2、6;`verifyCollection` 第五节,错误码 `PLUGINS_INDEX_INVALID`、`PLUGINS_INDEX_DUPLICATE`、`TAG_NOT_DECLARED` |
 | `tags.schema.json` | `tags.json` | 合集根,可选文件 | 无脚本生成,人工维护 | 校验规则 6;`verifyCollection` 第四节,错误码 `TAGS_INVALID`、`TAGS_DUPLICATE` |
 | `author-manifest.schema.json` | `author_manifest.json` | `plugins/` | `scripts/import-plugins.mjs` 的 `planAuthorManifest` | 校验规则 12;`verifyCollection` 第六节与第七节(作者目录命名),错误码 `AUTHOR_MANIFEST_INVALID`、`AUTHOR_MANIFEST_DUPLICATE`、`AUTHOR_NOT_REGISTERED` |
 | `plugin-manifest.schema.json` | `plugin_manifest.json` | `plugins/<作者>/` | `scripts/import-plugins.mjs` 的 `planPluginManifest` | 校验规则 2;`inspectAuthor`,错误码 `PLUGIN_MANIFEST_INVALID` |
@@ -23,7 +23,7 @@
 - Schema 是书面契约。文档、`template/` 骨架与插件市场按 Schema 理解字段。脚本改了而 Schema 没改,契约就失真;Schema 先行而脚本没跟上,脚本就会放过 Schema 已经禁止的写法。两者必须一致。
 - 改一处必须同步另一处。新增字段时,在 `collection-verify.mjs` 的检查分支里加判断,同时在对应 Schema 的 `properties` 与 `required` 里补上;删除或放宽约束时,两边一起改。评审时按本文件上表逐条对照,不凭印象。
 - 脚本能查、Schema 表达不了的约束,只由脚本保证,并在对应 Schema 的 `description` 或 `$comment` 里注明:
-  - 唯一性的一半:插件目录索引 `plugins.json` 的 `plugin_name`、`author_manifest.json` 的 `username`。JSON Schema 没有按属性去重的关键字,数组级 `uniqueItems` 只在条目完全相同时生效,所以两份 Schema 只拦住「一字不差」的重复项,「同名但 `tag` 或 `profile` 不同」这类重复只能由脚本的 `PLUGINS_DUPLICATE`、`AUTHOR_MANIFEST_DUPLICATE` 查。`plugin_manifest.json` 与 `tags.json` 是字符串数组,`uniqueItems` 在那里能完整去重。
+  - 唯一性的一半:插件目录索引 `plugins.json` 的 `plugin_name`、`author_manifest.json` 的 `username`。JSON Schema 没有按属性去重的关键字,数组级 `uniqueItems` 只在条目完全相同时生效,所以两份 Schema 只拦住「一字不差」的重复项,「同名但 `tag` 或 `profile` 不同」这类重复只能由脚本的 `PLUGINS_INDEX_DUPLICATE`、`AUTHOR_MANIFEST_DUPLICATE` 查。`plugin_manifest.json` 与 `tags.json` 是字符串数组,`uniqueItems` 在那里能完整去重。
   - 顺序:`versions.json` 的 `versions` 按版本号降序。
   - 集合关系:`latest` 必须出现在 `versions` 内;插件目录索引 `plugins.json` 的 `tag` 必须取自 `tags.json`。
   - 文件系统与签名:版本目录是否存在、`plugin.js.sig` 能否验签、三层清单的覆盖范围与 SHA-512。这些不是 JSON 结构问题,不在任何 Schema 的覆盖范围内,只由 `collection-verify.mjs` 与 `scripts/pki.mjs` 处理。

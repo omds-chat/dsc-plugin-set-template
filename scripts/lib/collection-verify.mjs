@@ -559,23 +559,23 @@ export function verifyCollection(collectionDir, options = {}) {
   const entries = []
   if (pluginsIndex !== undefined) {
     if (!Array.isArray(pluginsIndex)) {
-      report.error('PLUGINS_INVALID', PLUGINS_INDEX_FILE + ' 的顶层必须是数组', PLUGINS_INDEX_FILE)
+      report.error('PLUGINS_INDEX_INVALID', PLUGINS_INDEX_FILE + ' 的顶层必须是数组', PLUGINS_INDEX_FILE)
     } else {
       const seenNames = new Set()
       for (const [index, entry] of pluginsIndex.entries()) {
         const label = PLUGINS_INDEX_FILE + ' 第 ' + index + ' 项'
         if (!isObject(entry)) {
-          report.error('PLUGINS_INVALID', label + ' 必须是对象', PLUGINS_INDEX_FILE)
+          report.error('PLUGINS_INDEX_INVALID', label + ' 必须是对象', PLUGINS_INDEX_FILE)
           continue
         }
         if (typeof entry.plugin_name !== 'string' || !PLUGIN_NAME_PATTERN.test(entry.plugin_name)) {
-          report.error('PLUGINS_INVALID', label + ' 的 plugin_name 不是合法的插件名', PLUGINS_INDEX_FILE)
+          report.error('PLUGINS_INDEX_INVALID', label + ' 的 plugin_name 不是合法的插件名', PLUGINS_INDEX_FILE)
           continue
         }
         const authorProblem = authorNameProblem(entry.author)
         if (authorProblem) {
           report.error(
-            'PLUGINS_INVALID',
+            'PLUGINS_INDEX_INVALID',
             label + ' 的 author ' + JSON.stringify(entry.author) + ' 不是合法的 GitHub 用户名:' +
               authorProblem + ';它必须与 plugins/ 下的目录同名',
             PLUGINS_INDEX_FILE,
@@ -583,11 +583,11 @@ export function verifyCollection(collectionDir, options = {}) {
           continue
         }
         if (!Array.isArray(entry.tag) || entry.tag.some((tag) => typeof tag !== 'string' || tag.length === 0)) {
-          report.error('PLUGINS_INVALID', label + ' 的 tag 必须是字符串数组', PLUGINS_INDEX_FILE)
+          report.error('PLUGINS_INDEX_INVALID', label + ' 的 tag 必须是字符串数组', PLUGINS_INDEX_FILE)
           continue
         }
         if (seenNames.has(entry.plugin_name)) {
-          report.error('PLUGINS_DUPLICATE', '插件名 ' + entry.plugin_name + ' 在 ' + PLUGINS_INDEX_FILE + ' 中重复出现', PLUGINS_INDEX_FILE)
+          report.error('PLUGINS_INDEX_DUPLICATE', '插件名 ' + entry.plugin_name + ' 在 ' + PLUGINS_INDEX_FILE + ' 中重复出现', PLUGINS_INDEX_FILE)
           continue
         }
         seenNames.add(entry.plugin_name)
