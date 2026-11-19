@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/plugin-manifest.schema.json",
   "title": "dsc-plugin-collection-plugin-manifest",
-  "description": "插件合集 plugins/<作者>/plugin_manifest.json,该作者的插件清单,由 L2 清单覆盖。每个插件名对应 plugins/<作者>/ 下一个同名目录,datalog.json 中该作者的插件必须出现在这里。",
+  "description": "插件合集 plugins/<作者>/plugin_manifest.json,该作者的插件清单,由 L2 清单覆盖。每个插件名对应 plugins/<作者>/ 下一个同名目录,插件目录索引 plugins.json 中该作者的插件必须出现在这里。",
   "type": "array",
   "items": {
     "$ref": "#/$defs/pluginName"

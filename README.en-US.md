@@ -36,7 +36,7 @@ This repository is not a plugin collection. It ships the skeleton and the specif
 │   ├── README.md                           schema index and script-rule mapping
 │   ├── manifest.schema.json                three-layer hash manifest
 │   ├── collection-meta.schema.json         collection root meta.json
-│   ├── datalog.schema.json                 collection root datalog.json
+│   ├── plugins.schema.json                 collection root plugins.json, the plugin directory index
 │   ├── tags.schema.json                    collection root tags.json
 │   ├── author-manifest.schema.json         plugins/author_manifest.json
 │   ├── plugin-manifest.schema.json         plugins/<author>/plugin_manifest.json
@@ -52,7 +52,7 @@ This repository is not a plugin collection. It ships the skeleton and the specif
     ├── certs/
     │   └── template-eec.crt                placeholder certificate, must be replaced
     ├── meta.json
-    ├── datalog.json
+    ├── plugins.json
     ├── tags.json
     ├── manifest.json                       placeholder L1 manifest, rewritten by pnpm build
     └── plugins/
@@ -74,7 +74,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collec
 4. Hand `eec.csr` to the root CA (the `DeepSeek-Chat-Enhanced` repository) and write the issued certificate to `certs/<collection id>-eec.crt`. The collection id comes from `--collection-name`, otherwise from the `collection` field of `build-info.json` in a distribution directory, otherwise from the collection directory name, which for a new collection is normally its repository name. `template/certs/template-eec.crt` is a placeholder and must not be used for real signing; rename it to the new collection id after copying.
 5. Put `eec_secret.pem` into the CI secret `EEC_SECRET_KEY`. Put the root certificate into `secrets.ROOT_CA_PEM`, or put the online-data URL of the root certificate into `vars.ROOT_CA_URL`. Never commit a private key.
 6. Edit `meta.json`. Download counting is off by default. To enable it, set `DOWNLOAD_COUNT_ENABLE` to `true` and provide both `DOWNLOAD_COUNT_API` and `API_NEED_IP`.
-7. Create author and plugin directories under `plugins/`. Naming rules and required files are in `template/plugins/README.md`. Register plugins in `datalog.json`, declare preset tags in `tags.json` and register authors in `plugins/author_manifest.json`.
+7. Create author and plugin directories under `plugins/`. Naming rules and required files are in `template/plugins/README.md`. Register plugins in the plugin directory index `plugins.json`, declare preset tags in `tags.json` and register authors in `plugins/author_manifest.json`.
 8. Register plugin sources in `.github/plugins-sources.json`, run `pnpm import` to import them, run `pnpm verify` to confirm consistency, then run `pnpm build` to produce `dist/`.
 
 ## Signing and the certificate chain
@@ -155,7 +155,7 @@ To enable revocation checking, concatenate the root certificate and the CRL into
 ├── certs/
 │   └── <collection id>-eec.crt# end-entity signing certificate, shipped with Pages, covered by no manifest
 ├── meta.json                  # L1
-├── datalog.json               # L1
+├── plugins.json               # L1
 ├── tags.json                  # L1
 ├── manifest.json              # L1 manifest
 ├── manifest.json.sig          # L1 manifest signature
@@ -181,7 +181,7 @@ Distribution uses three hash-manifest layers, each with one `manifest.json` and 
 
 | Layer | Location | Covered files (relative to the layer directory) |
 |:---:|:---:|:---:|
-| L1 | collection root | `meta.json`, `datalog.json`, `plugins/author_manifest.json` required, `tags.json` optional |
+| L1 | collection root | `meta.json`, `plugins.json`, `plugins/author_manifest.json` required, `tags.json` optional |
 | L2 | `plugins/<author>/` | `author_pub.pem`, `plugin_manifest.json` |
 | L3 | `plugins/<author>/<plugin>/` | `versions.json`, `<version>/meta.json` |
 
@@ -192,7 +192,7 @@ Manifest format, with the JSON Schema in `schemas/manifest.schema.json`:
   "schemaVersion": 1,
   "revision": 1,
   "files": [
-    { "path": "datalog.json", "sha512": "<128 lowercase hex characters>" }
+    { "path": "plugins.json", "sha512": "<128 lowercase hex characters>" }
   ]
 }
 ```
@@ -203,7 +203,7 @@ Manifest format, with the JSON Schema in `schemas/manifest.schema.json`:
 - L3 does not cover `plugin.js` or `plugin.js.sig`: the artifact itself is signed per version by `plugin.js.sig`, and the manifest describes metadata only.
 - `tags.json` is optional: when it exists it must be covered by the L1 manifest, and when it does not exist it is neither required nor listed.
 - The only collection signature inside a version directory is `plugin.js.sig`, and `plugin.js.author.sig` stays optional. `meta.json` is neither signed on its own nor accepts an author signature: it is covered by the L3 manifest and bound by the collection EEC, while the author public key itself is covered by L2.
-- `meta.json`, `datalog.json`, `tags.json`, `plugins/author_manifest.json`, `plugins/<author>/plugin_manifest.json`, `plugins/<author>/<plugin>/versions.json` and the three-layer `manifest.json` each have a JSON Schema in `schemas/`. The index, mapping every script rule to the constraint that mirrors it, is in [`schemas/README.md`](schemas/README.md).
+- `meta.json`, `plugins.json`, `tags.json`, `plugins/author_manifest.json`, `plugins/<author>/plugin_manifest.json`, `plugins/<author>/<plugin>/versions.json` and the three-layer `manifest.json` each have a JSON Schema in `schemas/`. The index, mapping every script rule to the constraint that mirrors it, is in [`schemas/README.md`](schemas/README.md).
 
 The three layers are deliberately not folded together: L1 does not reference L2 and L2 does not reference L3, so each layer can be published, verified and re-signed on its own. The trade-off gives up "one check yields a digest of the whole tree" in exchange for per-plugin incremental updates: changing one plugin only increments the L3 `revision`, leaves L2 and L1 untouched, and clients refetch just that layer. Folding the layers into a single root manifest would make every plugin release rewrite the root manifest and force every client to refetch the whole digest.
 
@@ -228,18 +228,18 @@ The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocert
 | # | Rule |
 |:---:|:---:|
 | 1 | The end-entity signing certificate exists: `certs/<collection id>-eec.crt` is looked up first, and only when it is missing does the verifier fall back to a legacy root `eec.pem` and report `EEC_LEGACY_LAYOUT`; it chains to the given root certificate (`--root-ca` or `ROOT_CA_PATH`), is not expired, has `digitalSignature` in `keyUsage` and is not a CA |
-| 2 | Every plugin in `datalog.json` appears in `plugins/<author>/plugin_manifest.json` and its plugin directory exists |
+| 2 | Every plugin in the plugin directory index `plugins.json` appears in `plugins/<author>/plugin_manifest.json` and its plugin directory exists |
 | 3 | Every plugin directory has `versions.json` and `latest` is present in `versions` |
 | 4 | Every version directory has `meta.json`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -md sha512 -inform DER -CAfile <root> -certfile certs/<collection id>-eec.crt`; a failure is an error |
 | 5 | When `plugin.js.author.sig` exists in a version directory, `plugins/<author>/author_pub.pem` must exist and the signature must verify with `openssl pkeyutl -verify`; a failure is an error. Other `*.author.sig` files are not checked |
-| 6 | When `tags.json` exists, every `tag` in `datalog.json` comes from it |
+| 6 | When `tags.json` exists, every `tag` in `plugins.json` comes from it |
 | 7 | All three manifests exist and are structurally valid: `schemaVersion` is 1, `revision` is a positive integer, `files` is a non-empty array, and each entry holds only `path` and `sha512` |
 | 8 | Every `path` is valid: forward slashes, relative, no `..`, not the manifest itself, no duplicates |
 | 9 | Coverage matches the layer exactly: every required file is listed and nothing extra is, so L3 never lists `plugin.js` or `plugin.js.sig` |
 | 10 | Every recorded SHA-512 matches the file contents, and a mismatch names the layer and the file |
 | 11 | Every `manifest.json.sig` verifies against the root certificate and the end-entity certificate; a failure is an error |
-| 12 | Author directory names, `author` in `datalog.json` and `username` in `plugins/author_manifest.json` must all be valid GitHub usernames: `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`, case-insensitive, at most 39 characters, with no leading or trailing hyphen. A directory name that does not match reports `AUTHOR_DIR_NAME_INVALID` and names `plugins/<directory>`; a mismatched `author` or `username` reports `DATALOG_INVALID` or `AUTHOR_MANIFEST_INVALID` |
-| 13 | Plugin names must carry the `dsc-` prefix. `plugin_name` in `datalog.json` and every entry of `plugins/<author>/plugin_manifest.json` are checked against `PLUGIN_NAME_PATTERN`, that is `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`; a missing prefix reports `DATALOG_INVALID` or `PLUGIN_MANIFEST_INVALID` |
+| 12 | Author directory names, `author` in `plugins.json` and `username` in `plugins/author_manifest.json` must all be valid GitHub usernames: `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`, case-insensitive, at most 39 characters, with no leading or trailing hyphen. A directory name that does not match reports `AUTHOR_DIR_NAME_INVALID` and names `plugins/<directory>`; a mismatched `author` or `username` reports `PLUGINS_INVALID` or `AUTHOR_MANIFEST_INVALID` |
+| 13 | Plugin names must carry the `dsc-` prefix. `plugin_name` in `plugins.json` and every entry of `plugins/<author>/plugin_manifest.json` are checked against `PLUGIN_NAME_PATTERN`, that is `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`; a missing prefix reports `PLUGINS_INVALID` or `PLUGIN_MANIFEST_INVALID` |
 
 `pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: a missing root certificate, an end-entity certificate that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. A real collection's CI does not pass that flag; `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
 

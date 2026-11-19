@@ -3,7 +3,7 @@
  * 按来源清单收录插件。
  *
  * 对清单中的每一项:取得源码、安装依赖、构建、把 dist 产物写入合集目录,
- * 再更新该插件的版本列表、该作者的插件清单与根目录插件目录。
+ * 再更新该插件的版本列表、该作者的插件清单与根目录的插件目录索引。
  * 单项失败只跳过该项并记录原因,不影响其他项,退出码保持 0。
  *
  * 与旧版 JSON 签名实现的差别:不再处理 plugin_sign.json 与 plugin_secret.pub,
@@ -245,10 +245,11 @@ function planPluginManifest(author, plugin) {
   return { path, value: names }
 }
 
-function planDatalog(plugin, author) {
-  const path = join(ROOT_DIR, 'datalog.json')
-  const current = existsSync(path) ? readJson(path, 'datalog.json') : []
-  if (!Array.isArray(current)) throw new Error('datalog.json 的顶层必须是数组')
+/** 在根目录的插件目录索引 plugins.json 中登记或更新一个插件,保留原有的标签。 */
+function planPluginsIndex(plugin, author) {
+  const path = join(ROOT_DIR, 'plugins.json')
+  const current = existsSync(path) ? readJson(path, 'plugins.json') : []
+  if (!Array.isArray(current)) throw new Error('plugins.json 的顶层必须是数组')
   const next = []
   let replaced = false
   for (const entry of current) {
@@ -373,7 +374,7 @@ async function importOne(item, label, options) {
       log('  插件未带作者签名,该版本只有合集 CMS 签名')
     }
 
-    const staged = [planVersions(pluginDir, version), planPluginManifest(author, plugin), planDatalog(plugin, author)]
+    const staged = [planVersions(pluginDir, version), planPluginManifest(author, plugin), planPluginsIndex(plugin, author)]
     // 未给出 profile 时不写作者清单,避免登记一条没有主页的条目;校验脚本会就此给出警告。
     if (profile) staged.push(planAuthorManifest(author, profile))
 

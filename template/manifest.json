@@ -3,12 +3,12 @@
   "revision": 1,
   "files": [
     {
-      "path": "datalog.json",
-      "sha512": "b7a9336ed3a424b5d4d59d9b20d0bbc33217207b584db6b758fddb9a70b99e7c8c9f8387ef318a6b2039e62f09a3a2592bf5c76d6947a6ea1d107b924d7461f4"
-    },
-    {
       "path": "meta.json",
       "sha512": "0775dbe0d959ebb70a50e5d7dfa8be3b40d695ac05316b6954f5a047ce273d85281dd4dd704ba82daa177a090027fe1cdf86606b00694c5a731a261af0df7ddf"
+    },
+    {
+      "path": "plugins.json",
+      "sha512": "b7a9336ed3a424b5d4d59d9b20d0bbc33217207b584db6b758fddb9a70b99e7c8c9f8387ef318a6b2039e62f09a3a2592bf5c76d6947a6ea1d107b924d7461f4"
     },
     {
       "path": "plugins/author_manifest.json",

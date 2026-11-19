@@ -26,6 +26,7 @@ import {
   LAYER3_FILES,
   MANIFEST_FILE,
   MANIFEST_SCHEMA_VERSION,
+  PLUGINS_INDEX_FILE,
   formatProblems,
   resolveRootCaPath,
   verifyCollection,
@@ -47,7 +48,7 @@ import {
  * 分发内容里的合集根文件。三层清单与签名一并分发,签名针对拷贝后的字节依然有效。
  * 终端签名证书不在这张表里:certs/ 整个目录由 writeDist 原样复制,证书改名或轮换都不用改这里。
  */
-const ROOT_DIST_FILES = ['meta.json', 'datalog.json', 'tags.json', MANIFEST_FILE, MANIFEST_FILE + '.sig']
+const ROOT_DIST_FILES = ['meta.json', PLUGINS_INDEX_FILE, 'tags.json', MANIFEST_FILE, MANIFEST_FILE + '.sig']
 
 function usage() {
   process.stdout.write([
@@ -116,18 +117,25 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'))
 }
 
-function listVersionDirs(root) {
-  const datalogPath = join(root, 'datalog.json')
-  if (!existsSync(datalogPath)) return []
-  let datalog
+/**
+ * 读取合集根的插件目录索引 plugins.json,缺失或结构不对时返回空数组。
+ * 索引不可用时按空合集处理:具体是缺文件还是结构错,由校验脚本逐条报出,这里不重复。
+ */
+function readPluginsIndex(root) {
+  const indexPath = join(root, PLUGINS_INDEX_FILE)
+  if (!existsSync(indexPath)) return []
   try {
-    datalog = readJson(datalogPath)
+    const data = readJson(indexPath)
+    return Array.isArray(data) ? data : []
   } catch {
     return []
   }
-  if (!Array.isArray(datalog)) return []
+}
+
+/** 列出插件目录索引登记过的插件下的全部版本目录,供逐版本签名使用。 */
+function listVersionDirs(root) {
   const found = []
-  for (const entry of datalog) {
+  for (const entry of readPluginsIndex(root)) {
     if (typeof entry !== 'object' || entry === null) continue
     if (typeof entry.plugin_name !== 'string' || typeof entry.author !== 'string') continue
     const dirName = entry.plugin_name.split('/').pop()
@@ -357,18 +365,10 @@ function copyTree(srcDir, destDir) {
   return count
 }
 
+/** 按插件目录索引汇总每个插件的版本情况,写入分发内容的 build-info.json。 */
 function collectIndex(root) {
-  const datalogPath = join(root, 'datalog.json')
-  if (!existsSync(datalogPath)) return []
-  let datalog
-  try {
-    datalog = readJson(datalogPath)
-  } catch {
-    return []
-  }
-  if (!Array.isArray(datalog)) return []
   const index = []
-  for (const entry of datalog) {
+  for (const entry of readPluginsIndex(root)) {
     if (typeof entry !== 'object' || entry === null) continue
     if (typeof entry.plugin_name !== 'string' || typeof entry.author !== 'string') continue
     const dirName = entry.plugin_name.split('/').pop()

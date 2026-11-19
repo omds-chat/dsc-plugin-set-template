@@ -36,7 +36,7 @@ dsc 生态的插件合集模板。照抄本仓库,可以快速得到一个符合
 │   ├── README.md                           Schema 索引与脚本校验对照
 │   ├── manifest.schema.json                三层哈希清单 manifest.json
 │   ├── collection-meta.schema.json         合集根 meta.json
-│   ├── datalog.schema.json                 合集根 datalog.json
+│   ├── plugins.schema.json                 合集根插件目录索引 plugins.json
 │   ├── tags.schema.json                    合集根 tags.json
 │   ├── author-manifest.schema.json         plugins/author_manifest.json
 │   ├── plugin-manifest.schema.json         plugins/<作者>/plugin_manifest.json
@@ -52,7 +52,7 @@ dsc 生态的插件合集模板。照抄本仓库,可以快速得到一个符合
     ├── certs/
     │   └── template-eec.crt                占位证书,必须换成根 CA 签发的证书
     ├── meta.json
-    ├── datalog.json
+    ├── plugins.json
     ├── tags.json
     ├── manifest.json                       L1 清单占位,由 pnpm build 重新生成
     └── plugins/
@@ -74,7 +74,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<合集
 4. 把 `eec.csr` 交给根 CA(`DeepSeek-Chat-Enhanced` 仓库)签发,拿回证书后写到 `certs/<合集 id>-eec.crt`。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,新建合集通常就是仓库目录名。骨架里的 `template/certs/template-eec.crt` 是占位证书,不能用于任何真实签名,复制到新仓库后必须按新合集 id 改名。
 5. 把 `eec_secret.pem` 放进 CI secret `EEC_SECRET_KEY`;把根证书放进 `secrets.ROOT_CA_PEM`,或把 online-data 分支的根证书地址放进 `vars.ROOT_CA_URL`。私钥不得入库。
 6. 编辑 `meta.json`:默认关闭下载计数。若要启用,把 `DOWNLOAD_COUNT_ENABLE` 置为 `true`,并同时给出 `DOWNLOAD_COUNT_API` 与 `API_NEED_IP`。
-7. 在 `plugins/` 下建立作者目录与插件目录,命名规则与必需文件见 `template/plugins/README.md`;在 `datalog.json` 登记插件,在 `tags.json` 声明预设标签,在 `plugins/author_manifest.json` 登记作者。
+7. 在 `plugins/` 下建立作者目录与插件目录,命名规则与必需文件见 `template/plugins/README.md`;在插件目录索引 `plugins.json` 登记插件,在 `tags.json` 声明预设标签,在 `plugins/author_manifest.json` 登记作者。
 8. 在 `.github/plugins-sources.json` 中登记插件来源,运行 `pnpm import` 收录插件,再运行 `pnpm verify` 确认自洽,最后运行 `pnpm build` 生成 `dist/`。
 
 ## 签名与证书链
@@ -155,7 +155,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 ├── certs/
 │   └── <合集 id>-eec.crt        # 终端签名证书,随 Pages 分发,不进任何清单
 ├── meta.json                  # L1
-├── datalog.json               # L1
+├── plugins.json               # L1
 ├── tags.json                  # L1
 ├── manifest.json              # L1 清单
 ├── manifest.json.sig          # L1 清单签名
@@ -181,7 +181,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 | 层 | 位置 | 覆盖的文件(相对该层目录) |
 |:---:|:---:|:---:|
-| L1 | 合集根 | `meta.json`、`datalog.json`、`plugins/author_manifest.json` 必需,`tags.json` 可选 |
+| L1 | 合集根 | `meta.json`、`plugins.json`、`plugins/author_manifest.json` 必需,`tags.json` 可选 |
 | L2 | `plugins/<作者>/` | `author_pub.pem`、`plugin_manifest.json` |
 | L3 | `plugins/<作者>/<插件>/` | `versions.json`、`<版本>/meta.json` |
 
@@ -192,7 +192,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
   "schemaVersion": 1,
   "revision": 1,
   "files": [
-    { "path": "datalog.json", "sha512": "<128 位小写十六进制>" }
+    { "path": "plugins.json", "sha512": "<128 位小写十六进制>" }
   ]
 }
 ```
@@ -203,7 +203,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 - L3 不覆盖 `plugin.js` 与 `plugin.js.sig`:产物本体由每个版本的 `plugin.js.sig` 独立签名,清单只描述元数据。
 - `tags.json` 可选:存在就必须被 L1 清单覆盖,不存在则不报错、也不进清单。
 - 版本目录的合集签名只有 `plugin.js.sig`,`plugin.js.author.sig` 可选保留。`meta.json` 不单独签名,也不接受作者签名:它由 L3 清单覆盖并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。
-- `meta.json`、`datalog.json`、`tags.json`、`plugins/author_manifest.json`、`plugins/<作者>/plugin_manifest.json`、`plugins/<作者>/<插件>/versions.json` 与三层 `manifest.json` 各有 JSON Schema,全部收在 `schemas/`;索引与「哪条脚本规则对应哪个约束」的对照表见 [`schemas/README.md`](schemas/README.md)。
+- `meta.json`、`plugins.json`、`tags.json`、`plugins/author_manifest.json`、`plugins/<作者>/plugin_manifest.json`、`plugins/<作者>/<插件>/versions.json` 与三层 `manifest.json` 各有 JSON Schema,全部收在 `schemas/`;索引与「哪条脚本规则对应哪个约束」的对照表见 [`schemas/README.md`](schemas/README.md)。
 
 三层之间不做收束:L1 不引用 L2,L2 不引用 L3,任何一层都可以单独发布、单独校验、单独重签。取舍是放弃「一次校验拿到全树摘要」,换取按插件增量更新:改一个插件只需 L3 的 `revision` 加一,L2 与 L1 的 `revision` 不变,客户端也只重新拉取这一层的清单与签名。若把三层收束成一份根清单,任何插件发版都会改动根清单,所有客户端都得重拉整份摘要。
 
@@ -228,18 +228,18 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | 编号 | 规则 |
 |:---:|:---:|
 | 1 | 终端签名证书存在:先找 `certs/<合集 id>-eec.crt`,找不到才回退旧的根目录 `eec.pem` 并报 `EEC_LEGACY_LAYOUT` 提示;由给定根证书签发(`--root-ca` 或 `ROOT_CA_PATH`),未过期,`keyUsage` 含 `digitalSignature`,`basicConstraints` 非 CA |
-| 2 | `datalog.json` 中的每个插件都在 `plugins/<author>/plugin_manifest.json` 中出现,且插件目录存在 |
+| 2 | 插件目录索引 `plugins.json` 中的每个插件都在 `plugins/<author>/plugin_manifest.json` 中出现,且插件目录存在 |
 | 3 | 每个插件目录有 `versions.json`,`latest` 必须在 `versions` 列表内 |
 | 4 | 每个版本目录有 `meta.json`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -md sha512 -inform DER -CAfile <根证书> -certfile certs/<合集 id>-eec.crt` 验签,失败即报错 |
 | 5 | 若版本目录存在 `plugin.js.author.sig`,则 `plugins/<author>/author_pub.pem` 必须存在,并用 `openssl pkeyutl -verify` 验证,失败即报错;其它 `*.author.sig` 不参与校验 |
-| 6 | `tags.json` 存在时,`datalog.json` 的 `tag` 必须取自其中 |
+| 6 | `tags.json` 存在时,`plugins.json` 的 `tag` 必须取自其中 |
 | 7 | 三层清单存在且结构合法:`schemaVersion` 为 1,`revision` 为正整数,`files` 为非空数组,条目只含 `path` 与 `sha512` |
 | 8 | 清单条目的 `path` 合法:正斜杠、相对路径、不含 `..`、不指向清单自身、不重复 |
 | 9 | 覆盖范围与该层应有的文件严格相等:该有的都在清单里,清单里没有多余项,L3 不得出现 `plugin.js` 与 `plugin.js.sig` |
 | 10 | 清单记录的每个 SHA-512 与文件实际内容一致,不一致时报出层号与具体文件 |
 | 11 | 每层 `manifest.json.sig` 用根证书与终端签名证书验签,失败即报错 |
-| 12 | 作者目录名、`datalog.json` 的 `author` 与 `plugins/author_manifest.json` 的 `username` 都必须是合法的 GitHub 用户名,正则 `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`,不区分大小写,长度上限 39,不得以连字符开头或结尾。目录名不符报 `AUTHOR_DIR_NAME_INVALID` 并指出 `plugins/<目录>`;`author` 与 `username` 不符分别报 `DATALOG_INVALID`、`AUTHOR_MANIFEST_INVALID` |
-| 13 | 插件名必须带 `dsc-` 前缀。`datalog.json` 的 `plugin_name` 与 `plugins/<作者>/plugin_manifest.json` 的每一项都按 `PLUGIN_NAME_PATTERN` 校验,即 `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`,缺前缀报 `DATALOG_INVALID` 或 `PLUGIN_MANIFEST_INVALID` |
+| 12 | 作者目录名、`plugins.json` 的 `author` 与 `plugins/author_manifest.json` 的 `username` 都必须是合法的 GitHub 用户名,正则 `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`,不区分大小写,长度上限 39,不得以连字符开头或结尾。目录名不符报 `AUTHOR_DIR_NAME_INVALID` 并指出 `plugins/<目录>`;`author` 与 `username` 不符分别报 `PLUGINS_INVALID`、`AUTHOR_MANIFEST_INVALID` |
+| 13 | 插件名必须带 `dsc-` 前缀。`plugins.json` 的 `plugin_name` 与 `plugins/<作者>/plugin_manifest.json` 的每一项都按 `PLUGIN_NAME_PATTERN` 校验,即 `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`,缺前缀报 `PLUGINS_INVALID` 或 `PLUGIN_MANIFEST_INVALID` |
 
 `pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:根证书缺失、终端签名证书未由根 CA 签发、三层清单或清单签名尚未生成时降级为警告。真实合集的 CI 不带这个开关;`--allow-missing-manifest` 只放开清单与清单签名缺失,结构与哈希检查照常执行。
 

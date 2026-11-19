@@ -34,11 +34,17 @@ import {
 } from '../pki.mjs'
 
 /**
+ * 插件目录索引的文件名。合集根必备,由 L1 清单覆盖;它与同级的 plugins/ 目录成对,
+ * 因此文件名是 plugins.json:索引说什么插件存在,plugins/ 下就有对应的目录。
+ */
+export const PLUGINS_INDEX_FILE = 'plugins.json'
+
+/**
  * 合集根目录必需的文件。tags.json 可选,存在时才要求被 L1 清单覆盖。
  * 终端签名证书不在本表:它的位置由 resolveEecCertPath 按 certs/<合集 id>-eec.crt 解析,
  * 并对旧的根目录 eec.pem 回退,不能写死成根目录文件。
  */
-export const ROOT_REQUIRED_FILES = ['meta.json', 'datalog.json']
+export const ROOT_REQUIRED_FILES = ['meta.json', PLUGINS_INDEX_FILE]
 /** 版本目录内必需的文件。meta.json.sig 已取消,产物本体只由 plugin.js.sig 签名 */
 export const VERSION_REQUIRED_FILES = ['meta.json', 'plugin.js', 'plugin.js.sig']
 /** 作者目录内的公钥文件名 */
@@ -50,7 +56,7 @@ export const MANIFEST_SIGNATURE_SUFFIX = '.sig'
 /** 清单结构版本,与 schemas/manifest.schema.json 保持一致 */
 export const MANIFEST_SCHEMA_VERSION = 1
 /** L1 必需覆盖的文件,相对合集根 */
-export const LAYER1_FILES = ['datalog.json', 'meta.json', 'plugins/author_manifest.json']
+export const LAYER1_FILES = [PLUGINS_INDEX_FILE, 'meta.json', 'plugins/author_manifest.json']
 /** L1 可选覆盖的文件:存在就必须被清单覆盖,不存在则不报错、也不进清单 */
 export const LAYER1_OPTIONAL_FILES = ['tags.json']
 /** L2 覆盖的文件,相对作者目录。author_pub.pem 缺失时按既有规则降级为警告,清单只覆盖实际存在的文件 */
@@ -66,14 +72,14 @@ const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 /**
  * 插件名:必须是 npm 包名且带 dsc- 前缀,全局包为 dsc-xxx,命名空间包为 @scope/dsc-xxx。
  * 与 scripts/import-plugins.mjs 的 PLUGIN_PATTERN 以及 schemas 下三处 pluginName.pattern 逐字相同;
- * datalog.json 的 plugin_name 与 plugins/<作者>/plugin_manifest.json 的每一项都按本正则校验。
+ * 插件目录索引 plugins.json 的 plugin_name 与 plugins/<作者>/plugin_manifest.json 的每一项都按本正则校验。
  */
 const PLUGIN_NAME_PATTERN = /^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*\/dsc-[a-z0-9][a-z0-9._-]*)$/
 
 /**
  * GitHub 用户名的合法形式,与 GitHub 自身的规则一致:字母或数字开头,其后为字母、数字或
  * 单个连字符,不得以连字符结尾、不得出现连续连字符,长度上限 39。GitHub 的账号校验不区分大小写,
- * 因此本正则带 i 标志;作者目录名、datalog.json 的 author 与 author_manifest.json 的 username
+ * 因此本正则带 i 标志;作者目录名、plugins.json 的 author 与 author_manifest.json 的 username
  * 共用这一套规则,三处不一致时由 AUTHOR_DIR_NAME_INVALID 等错误指出具体位置。
  */
 export const AUTHOR_NAME_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
@@ -81,7 +87,7 @@ export const AUTHOR_NAME_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
 export const AUTHOR_NAME_MAX_LENGTH = 39
 
 /**
- * 作者名不合法的原因。作者目录名、datalog.json 的 author 与 plugins/author_manifest.json 的
+ * 作者名不合法的原因。作者目录名、插件目录索引 plugins.json 的 author 与 plugins/author_manifest.json 的
  * username 本就要求同一份取值,规则分裂只会让文档与代码对不上,所以共用本函数。
  * @param {unknown} name 作者名
  * @returns {string|null} 不合法时返回原因,合法返回 null
@@ -547,48 +553,48 @@ export function verifyCollection(collectionDir, options = {}) {
     }
   }
 
-  // 五、插件目录 datalog.json
-  const datalogPath = join(root, 'datalog.json')
-  const datalog = isFile(datalogPath) ? parseJsonFile(datalogPath, 'datalog.json', report) : undefined
+  // 五、插件目录索引 plugins.json
+  const pluginsIndexPath = join(root, PLUGINS_INDEX_FILE)
+  const pluginsIndex = isFile(pluginsIndexPath) ? parseJsonFile(pluginsIndexPath, PLUGINS_INDEX_FILE, report) : undefined
   const entries = []
-  if (datalog !== undefined) {
-    if (!Array.isArray(datalog)) {
-      report.error('DATALOG_INVALID', 'datalog.json 的顶层必须是数组', 'datalog.json')
+  if (pluginsIndex !== undefined) {
+    if (!Array.isArray(pluginsIndex)) {
+      report.error('PLUGINS_INVALID', PLUGINS_INDEX_FILE + ' 的顶层必须是数组', PLUGINS_INDEX_FILE)
     } else {
       const seenNames = new Set()
-      for (const [index, entry] of datalog.entries()) {
-        const label = 'datalog.json 第 ' + index + ' 项'
+      for (const [index, entry] of pluginsIndex.entries()) {
+        const label = PLUGINS_INDEX_FILE + ' 第 ' + index + ' 项'
         if (!isObject(entry)) {
-          report.error('DATALOG_INVALID', label + ' 必须是对象', 'datalog.json')
+          report.error('PLUGINS_INVALID', label + ' 必须是对象', PLUGINS_INDEX_FILE)
           continue
         }
         if (typeof entry.plugin_name !== 'string' || !PLUGIN_NAME_PATTERN.test(entry.plugin_name)) {
-          report.error('DATALOG_INVALID', label + ' 的 plugin_name 不是合法的插件名', 'datalog.json')
+          report.error('PLUGINS_INVALID', label + ' 的 plugin_name 不是合法的插件名', PLUGINS_INDEX_FILE)
           continue
         }
         const authorProblem = authorNameProblem(entry.author)
         if (authorProblem) {
           report.error(
-            'DATALOG_INVALID',
+            'PLUGINS_INVALID',
             label + ' 的 author ' + JSON.stringify(entry.author) + ' 不是合法的 GitHub 用户名:' +
               authorProblem + ';它必须与 plugins/ 下的目录同名',
-            'datalog.json',
+            PLUGINS_INDEX_FILE,
           )
           continue
         }
         if (!Array.isArray(entry.tag) || entry.tag.some((tag) => typeof tag !== 'string' || tag.length === 0)) {
-          report.error('DATALOG_INVALID', label + ' 的 tag 必须是字符串数组', 'datalog.json')
+          report.error('PLUGINS_INVALID', label + ' 的 tag 必须是字符串数组', PLUGINS_INDEX_FILE)
           continue
         }
         if (seenNames.has(entry.plugin_name)) {
-          report.error('DATALOG_DUPLICATE', '插件名 ' + entry.plugin_name + ' 在 datalog.json 中重复出现', 'datalog.json')
+          report.error('PLUGINS_DUPLICATE', '插件名 ' + entry.plugin_name + ' 在 ' + PLUGINS_INDEX_FILE + ' 中重复出现', PLUGINS_INDEX_FILE)
           continue
         }
         seenNames.add(entry.plugin_name)
         if (tagSet) {
           for (const tag of entry.tag) {
             if (!tagSet.has(tag)) {
-              report.error('TAG_NOT_DECLARED', '插件 ' + entry.plugin_name + ' 的标签 ' + tag + ' 未在 tags.json 中声明', 'datalog.json')
+              report.error('TAG_NOT_DECLARED', '插件 ' + entry.plugin_name + ' 的标签 ' + tag + ' 未在 tags.json 中声明', PLUGINS_INDEX_FILE)
             }
           }
         }
@@ -794,7 +800,7 @@ function inspectVersionMeta({ versionDir, versionRel, version, pluginName, repor
     return
   }
   if (meta.name !== pluginName) {
-    report.error('PLUGIN_META_MISMATCH', versionRel + '/meta.json 的 name 为 ' + JSON.stringify(meta.name) + ',与 datalog.json 的 ' + pluginName + ' 不一致', versionRel + '/meta.json')
+    report.error('PLUGIN_META_MISMATCH', versionRel + '/meta.json 的 name 为 ' + JSON.stringify(meta.name) + ',与 ' + PLUGINS_INDEX_FILE + ' 的 ' + pluginName + ' 不一致', versionRel + '/meta.json')
   }
   if (meta.version !== version) {
     report.error('PLUGIN_META_MISMATCH', versionRel + '/meta.json 的 version 为 ' + JSON.stringify(meta.version) + ',与目录名 ' + version + ' 不一致', versionRel + '/meta.json')
