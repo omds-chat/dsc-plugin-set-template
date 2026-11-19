@@ -74,7 +74,7 @@ jobs:
           openssl x509 -in eec.pem -noout -ext basicConstraints
           openssl x509 -in eec.pem -noout -checkend 0
 
-      # 用 EEC 私钥为每个版本的 meta.json 与 plugin.js 生成 CMS 分离签名,并生成 dist/。
+      # 用 EEC 私钥为三层清单与每个版本的 plugin.js 生成 CMS 分离签名,并生成 dist/。
       # 私钥只从 secret 读取,且必须与仓库内的 eec.pem 配对,否则步骤直接失败。
       - name: Build distribution
         env:

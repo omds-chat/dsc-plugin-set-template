@@ -1,6 +1,6 @@
 # awesome-dsc-plugin-set-template
 
-dsc 插件合集模板。照抄本仓库,可以快速得到一个符合分发规范 v2 的插件合集:目录骨架、JSON Schema、基于 OpenSSL PKI 的签名工具与自洽性校验脚本都在这里。
+dsc 生态的插件合集模板。照抄本仓库,可以快速得到一个符合分发规范 v2 的插件合集:目录骨架、JSON Schema、基于 OpenSSL PKI 的签名工具与自洽性校验脚本都在这里。
 
 本仓库本身不是插件合集,它只提供骨架与规范载体,不收录任何插件。
 
@@ -30,6 +30,7 @@ dsc 插件合集模板。照抄本仓库,可以快速得到一个符合分发规
 ├── README.md
 ├── README.en-US.md
 ├── package.json
+├── pnpm-lock.yaml
 ├── pnpm-workspace.yaml
 ├── schemas/
 │   ├── README.md                           Schema 索引与脚本校验对照
@@ -52,6 +53,7 @@ dsc 插件合集模板。照抄本仓库,可以快速得到一个符合分发规
     ├── meta.json
     ├── datalog.json
     ├── tags.json
+    ├── manifest.json                       L1 清单占位,由 pnpm build 重新生成
     └── plugins/
         ├── author_manifest.json
         └── README.md                       三层目录与必需文件
@@ -186,12 +188,12 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 - `revision` 是每层独立的正整数:该层文件集合或内容变化时加一,不变时沿用旧值,没有旧清单时从 1 开始。
 - L3 不覆盖 `plugin.js` 与 `plugin.js.sig`:产物本体由每个版本的 `plugin.js.sig` 独立签名,清单只描述元数据。
 - `tags.json` 可选:存在就必须被 L1 清单覆盖,不存在则不报错、也不进清单。
-- `meta.json.sig` 已取消,版本目录的合集签名只剩 `plugin.js.sig`;`plugin.js.author.sig` 可选保留。`meta.json.author.sig` 同样取消:meta.json 由 L3 清单覆盖并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。`dsc-plugin-template` 仓库仍在产出该文件,待同步。
+- 版本目录的合集签名只有 `plugin.js.sig`,`plugin.js.author.sig` 可选保留。`meta.json` 不单独签名,也不接受作者签名:它由 L3 清单覆盖并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。
 - `meta.json`、`datalog.json`、`tags.json`、`plugins/author_manifest.json`、`plugins/<作者>/plugin_manifest.json`、`plugins/<作者>/<插件>/versions.json` 与三层 `manifest.json` 各有 JSON Schema,全部收在 `schemas/`;索引与「哪条脚本规则对应哪个约束」的对照表见 [`schemas/README.md`](schemas/README.md)。
 
 三层之间不做收束:L1 不引用 L2,L2 不引用 L3,任何一层都可以单独发布、单独校验、单独重签。取舍是放弃「一次校验拿到全树摘要」,换取按插件增量更新:改一个插件只需 L3 的 `revision` 加一,L2 与 L1 的 `revision` 不变,客户端也只重新拉取这一层的清单与签名。若把三层收束成一份根清单,任何插件发版都会改动根清单,所有客户端都得重拉整份摘要。
 
-旧的 `plugin_secret.pub` 与 `plugin_set_sign.json` 已删除。合集的可信性由「根 CA 签发的 EEC」证明,不再单独签发信任签名;根证书不进 `dist/`,由 online-data 分支分发,网页用内嵌的根证书指纹核对。
+合集的可信性由「根 CA 签发的 EEC」证书链证明,不另发信任签名;根证书不进 `dist/`,由 online-data 分支分发,网页用内嵌的根证书指纹核对。
 
 ## 签名与校验
 
@@ -203,11 +205,11 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | 合集 CMS 签名 | 每个版本的 `plugin.js` | `plugin.js.sig` |
 | 作者裸公钥签名 | `plugin.js`,可选 | `plugin.js.author.sig` |
 
-签名命令固定为 `openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr`,产物写到 `<文件>.sig`。`meta.json` 不再单独签名,由 L3 清单的 SHA-512 覆盖。
+签名命令固定为 `openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr`,产物写到 `<文件>.sig`。`meta.json` 不单独签名,由 L3 清单的 SHA-512 覆盖。
 
 ### 校验规则
 
-`pnpm verify` 逐项检查,任一错误都以非零退出码结束并一次性列出全部问题,每条都带层号与文件路径。
+`pnpm verify` 逐项检查,任一错误都以非零退出码结束并一次性列出全部问题;清单相关的错误带层号,所有错误都带文件路径。
 
 | 编号 | 规则 |
 |:---:|:---:|
@@ -225,7 +227,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 `pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:根证书缺失、`eec.pem` 未由根 CA 签发、三层清单或清单签名尚未生成时降级为警告。真实合集的 CI 不带这个开关;`--allow-missing-manifest` 只放开清单与清单签名缺失,结构与哈希检查照常执行。
 
-校验语义分两档:本仓库的脚本是发布前的强校验,失败即阻断;插件市场一侧的证书链校验、插件签名校验与网页文件签名校验失败只警告,不阻断,也不做兜底。
+本仓库的脚本是发布前的强校验:除上面显式放开的开关,任一错误都会阻断发布。
 
 ## 签名工具接口
 
@@ -250,7 +252,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 ## 校验与部署流程
 
-- 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 先补齐三层清单并签名,再校验,最后把分发内容写入 `dist/`;带 `--sign` 时用 `EEC_SECRET_KEY` 为 `plugin.js` 与三层清单签名。
+- 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 先补齐三层清单,再校验,最后把分发内容写入 `dist/`;带 `--sign` 时用 `EEC_SECRET_KEY` 为三层清单与每个版本的 `plugin.js` 生成签名。
 - 三层 `manifest.json` 与 `manifest.json.sig` 必须随合集源码提交入库。revision 从该层上一份清单读出,不提交就会在每次全新 checkout 时退回 1,跨 CI 的 revision 沿用随之失效。
 - 自动化:推送到 main 或手动触发 `build-and-deploy`,依次安装依赖、按清单收录插件、解析根证书、用 `openssl verify` 校验 `eec.pem` 的证书链、用 `EEC_SECRET_KEY` 签名并构建 `dist/`、对 `dist/` 再跑一次完整校验,最后发布到 Pages。
 - 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 online-data 分支拉取。

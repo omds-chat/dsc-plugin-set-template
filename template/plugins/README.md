@@ -44,7 +44,7 @@
 | `plugin.js.sig` | 是 | 合集 CMS 分离签名,由 EEC 生成 |
 | `plugin.js.author.sig` | 否 | 作者裸公钥分离签名,存在时用 `plugins/<author>/author_pub.pem` 校验 |
 
-`meta.json` 不接受作者签名:它由 L3 清单覆盖,并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。`dsc-plugin-template` 仓库仍在产出 `meta.json.author.sig`,待同步。
+`meta.json` 不接受作者签名:它由 L3 清单覆盖,并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。
 
 合集签名由 `scripts/build-collection.mjs --sign` 在 CI 中用 `EEC_SECRET_KEY` 生成,仓库内不存放任何私钥。作者签名由作者自己的构建流程生成,`scripts/import-plugins.mjs` 会把插件产物里的 `plugin.js.sig` 落成 `plugin.js.author.sig`,并把 `author_pub.pem` 落到作者目录。
 
@@ -68,4 +68,4 @@ plugins/
         plugin.js.author.sig
 ```
 
-合集根目录还需要 `eec.pem`、`datalog.json`、`meta.json`、`tags.json`,以及 L1 清单 `manifest.json` 与 `manifest.json.sig`。旧的 `plugin_secret.pub` 与 `plugin_set_sign.json` 已废弃,由 `eec.pem` 的证书链取代。
+合集根目录还需要 `eec.pem`、`datalog.json`、`meta.json`、`tags.json`,以及 L1 清单 `manifest.json` 与 `manifest.json.sig`。合集的可信性由 `eec.pem` 的证书链证明,不另发信任签名。

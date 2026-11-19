@@ -1,6 +1,6 @@
 # awesome-dsc-plugin-set-template
 
-A template for dsc plugin collections. Copy this repository and you get a collection that follows distribution specification v2: the directory skeleton, JSON Schemas, OpenSSL PKI signing tools and a consistency checker are all included.
+A template for plugin collections in the dsc ecosystem. Copy this repository and you get a collection that follows distribution specification v2: the directory skeleton, JSON Schemas, OpenSSL PKI signing tools and a consistency checker are all included.
 
 This repository is not a plugin collection. It ships the skeleton and the specification only, and indexes no plugins.
 
@@ -30,6 +30,7 @@ This repository is not a plugin collection. It ships the skeleton and the specif
 ├── README.md
 ├── README.en-US.md
 ├── package.json
+├── pnpm-lock.yaml
 ├── pnpm-workspace.yaml
 ├── schemas/
 │   ├── README.md                           schema index and script-rule mapping
@@ -52,6 +53,7 @@ This repository is not a plugin collection. It ships the skeleton and the specif
     ├── meta.json
     ├── datalog.json
     ├── tags.json
+    ├── manifest.json                       placeholder L1 manifest, rewritten by pnpm build
     └── plugins/
         ├── author_manifest.json
         └── README.md                       three-layer layout and required files
@@ -186,12 +188,12 @@ Manifest format, with the JSON Schema in `schemas/manifest.schema.json`:
 - `revision` is a positive integer per layer: it increments when the layer's file set or contents change, keeps its value when nothing changed, and starts at 1 without a previous manifest.
 - L3 does not cover `plugin.js` or `plugin.js.sig`: the artifact itself is signed per version by `plugin.js.sig`, and the manifest describes metadata only.
 - `tags.json` is optional: when it exists it must be covered by the L1 manifest, and when it does not exist it is neither required nor listed.
-- `meta.json.sig` is gone: the only collection signature inside a version directory is `plugin.js.sig`, and `plugin.js.author.sig` stays optional. `meta.json.author.sig` is dropped as well: `meta.json` is covered by the L3 manifest and bound by the collection EEC, while the author public key itself is covered by L2. The `dsc-plugin-template` repository still emits that file and has to be synced.
+- The only collection signature inside a version directory is `plugin.js.sig`, and `plugin.js.author.sig` stays optional. `meta.json` is neither signed on its own nor accepts an author signature: it is covered by the L3 manifest and bound by the collection EEC, while the author public key itself is covered by L2.
 - `meta.json`, `datalog.json`, `tags.json`, `plugins/author_manifest.json`, `plugins/<author>/plugin_manifest.json`, `plugins/<author>/<plugin>/versions.json` and the three-layer `manifest.json` each have a JSON Schema in `schemas/`. The index, mapping every script rule to the constraint that mirrors it, is in [`schemas/README.md`](schemas/README.md).
 
 The three layers are deliberately not folded together: L1 does not reference L2 and L2 does not reference L3, so each layer can be published, verified and re-signed on its own. The trade-off gives up "one check yields a digest of the whole tree" in exchange for per-plugin incremental updates: changing one plugin only increments the L3 `revision`, leaves L2 and L1 untouched, and clients refetch just that layer. Folding the layers into a single root manifest would make every plugin release rewrite the root manifest and force every client to refetch the whole digest.
 
-The old `plugin_secret.pub` and `plugin_set_sign.json` are gone. A collection is trusted because its EEC chains to the root CA, so no separate trust signature is issued. The root certificate is not part of `dist/`: it is distributed through the online-data branch and pinned by fingerprint inside the web client.
+A collection is trusted because its EEC chains to the root CA, so no separate trust signature is issued. The root certificate is not part of `dist/`: it is distributed through the online-data branch and pinned by fingerprint inside the web client.
 
 ## Signing and verification
 
@@ -203,11 +205,11 @@ The old `plugin_secret.pub` and `plugin_set_sign.json` are gone. A collection is
 | Collection CMS signature | `plugin.js` of every version | `plugin.js.sig` |
 | Author bare public key signature | `plugin.js`, optional | `plugin.js.author.sig` |
 
-The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr` with the artifact written to `<file>.sig`. `meta.json` is no longer signed separately: the L3 manifest covers it by SHA-512.
+The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocerts -noattr` with the artifact written to `<file>.sig`. `meta.json` is not signed separately: the L3 manifest covers it by SHA-512.
 
 ### Verification rules
 
-`pnpm verify` checks each item below and exits non-zero with the full problem list if any of them fails. Every problem names its layer and file path.
+`pnpm verify` checks each item below and exits non-zero with the full problem list if any of them fails. Manifest problems name their layer, and every problem names its file path.
 
 | # | Rule |
 |:---:|:---:|
@@ -225,7 +227,7 @@ The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocert
 
 `pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: a missing root certificate, an `eec.pem` that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. A real collection's CI does not pass that flag; `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
 
-Verification has two levels. The scripts here are a strict pre-release gate and fail hard. On the plugin market side, certificate chain checks, plugin signature checks and web asset signature checks only warn: they never block and never fall back.
+The scripts here are a strict pre-release gate: apart from the flags above, any error blocks the release.
 
 ## Signing tool API
 
@@ -250,7 +252,7 @@ Verification has two levels. The scripts here are a strict pre-release gate and 
 
 ## Verification and deployment
 
-- Locally: run `pnpm install`, then `pnpm verify`. `pnpm build` first materialises and signs the three manifests, then verifies, then writes distribution content to `dist/`; with `--sign` it signs `plugin.js` and the three manifests with `EEC_SECRET_KEY`.
+- Locally: run `pnpm install`, then `pnpm verify`. `pnpm build` first materialises the three manifests, then verifies, then writes distribution content to `dist/`; with `--sign` it signs the three manifests and every version's `plugin.js` with `EEC_SECRET_KEY`.
 - The three `manifest.json` and `manifest.json.sig` files must be committed together with the collection source. A revision is read back from the previous manifest of the same layer, so leaving them out of version control resets every layer to 1 on a fresh checkout and breaks revision continuity across CI runs.
 - Automation: a push to main or a manual `build-and-deploy` run installs dependencies, imports plugins from the manifest, resolves the root certificate, checks the `eec.pem` chain with `openssl verify`, signs with `EEC_SECRET_KEY` and builds `dist/`, runs a full verification on `dist/` and finally publishes to Pages.
 - The root certificate comes from one of two places: `secrets.ROOT_CA_PEM` (PEM text) wins, otherwise `vars.ROOT_CA_URL` is fetched from the online-data branch.
