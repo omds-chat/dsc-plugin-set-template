@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/versions.schema.json",
+  "title": "dsc-plugin-collection-versions",
+  "description": "插件合集 plugins/<作者>/<插件>/versions.json,该插件的版本列表,由 L3 清单覆盖。latest 必须出现在 versions 内;versions 按版本号降序排列且不得重复。每个版本号对应同目录下一个同名目录,目录内有 meta.json、plugin.js 与 plugin.js.sig。",
+  "type": "object",
+  "properties": {
+    "latest": {
+      "$ref": "#/$defs/version",
+      "description": "最新版本号,必须是合法版本号且出现在 versions 列表内,否则校验脚本报 LATEST_NOT_LISTED。"
+    },
+    "versions": {
+      "type": "array",
+      "description": "全部版本号,按版本号降序排列,不得重复。每项对应插件目录下一个同名版本目录。",
+      "items": {
+        "$ref": "#/$defs/version"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "latest",
+    "versions"
+  ],
+  "$comment": "降序与 latest 属于集合间的关系约束,JSON Schema 表达不了:校验脚本只检查 latest 落在 versions 内(VERSIONS_INVALID、LATEST_NOT_LISTED),降序与去重由 import-plugins.mjs 的 planVersions 保证,本文件用 uniqueItems 把去重写成书面契约。",
+  "$defs": {
+    "version": {
+      "type": "string",
+      "description": "语义化版本号,格式 x.y.z,三段都是非负整数且不带前导零。pattern 与校验脚本的 SEMVER_PATTERN 逐字相同。",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+      "examples": [
+        "1.0.0",
+        "0.9.0"
+      ]
+    }
+  }
+}

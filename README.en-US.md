@@ -32,8 +32,15 @@ This repository is not a plugin collection. It ships the skeleton and the specif
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── schemas/
-│   ├── runtime/meta.json                   plugin runtime metadata
-│   └── collection/                         collection metadata, manifests, versions
+│   ├── README.md                           schema index and script-rule mapping
+│   ├── manifest.schema.json                three-layer hash manifest
+│   ├── collection-meta.schema.json         collection root meta.json
+│   ├── datalog.schema.json                 collection root datalog.json
+│   ├── tags.schema.json                    collection root tags.json
+│   ├── author-manifest.schema.json         plugins/author_manifest.json
+│   ├── plugin-manifest.schema.json         plugins/<author>/plugin_manifest.json
+│   ├── versions.schema.json                plugins/<author>/<plugin>/versions.json
+│   └── runtime/meta.json                   plugin runtime metadata
 ├── scripts/
 │   ├── pki.mjs                             OpenSSL PKI wrapper
 │   ├── build-collection.mjs                sign, verify, then produce distribution content
@@ -180,6 +187,7 @@ Manifest format, with the JSON Schema in `schemas/manifest.schema.json`:
 - L3 does not cover `plugin.js` or `plugin.js.sig`: the artifact itself is signed per version by `plugin.js.sig`, and the manifest describes metadata only.
 - `tags.json` is optional: when it exists it must be covered by the L1 manifest, and when it does not exist it is neither required nor listed.
 - `meta.json.sig` is gone: the only collection signature inside a version directory is `plugin.js.sig`, and `plugin.js.author.sig` stays optional. `meta.json.author.sig` is dropped as well: `meta.json` is covered by the L3 manifest and bound by the collection EEC, while the author public key itself is covered by L2. The `dsc-plugin-template` repository still emits that file and has to be synced.
+- `meta.json`, `datalog.json`, `tags.json`, `plugins/author_manifest.json`, `plugins/<author>/plugin_manifest.json`, `plugins/<author>/<plugin>/versions.json` and the three-layer `manifest.json` each have a JSON Schema in `schemas/`. The index, mapping every script rule to the constraint that mirrors it, is in [`schemas/README.md`](schemas/README.md).
 
 The three layers are deliberately not folded together: L1 does not reference L2 and L2 does not reference L3, so each layer can be published, verified and re-signed on its own. The trade-off gives up "one check yields a digest of the whole tree" in exchange for per-plugin incremental updates: changing one plugin only increments the L3 `revision`, leaves L2 and L1 untouched, and clients refetch just that layer. Folding the layers into a single root manifest would make every plugin release rewrite the root manifest and force every client to refetch the whole digest.
 

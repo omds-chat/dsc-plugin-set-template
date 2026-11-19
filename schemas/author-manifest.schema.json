@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/author-manifest.schema.json",
+  "title": "dsc-plugin-collection-author-manifest",
+  "description": "插件合集 plugins/author_manifest.json,登记的作者清单,由 L1 清单覆盖。username 对应 plugins/ 下的同名目录,在清单内不重复;重复登记由校验脚本警告,不阻断。",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "username": {
+        "type": "string",
+        "minLength": 1,
+        "description": "作者英文名,即 plugins/ 下的同名目录。校验脚本只要求非空字符串;目录命名规则由 import-plugins.mjs 的 AUTHOR_PATTERN 约束。"
+      },
+      "profile": {
+        "type": "string",
+        "minLength": 1,
+        "description": "作者主页链接。校验脚本只要求非空字符串,不校验 URL 形式;import-plugins.mjs 收录时要求 http 或 https 地址。"
+      }
+    },
+    "required": [
+      "username",
+      "profile"
+    ]
+  },
+  "uniqueItems": true,
+  "$comment": "完全相同的重复条目由 uniqueItems 拒绝;两条的 profile 不同时抓不到同名的重复项,按属性去重只能由 collection-verify.mjs 的 AUTHOR_MANIFEST_DUPLICATE 提示(该提示是警告,不阻断)。"
+}

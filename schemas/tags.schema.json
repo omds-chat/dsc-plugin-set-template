@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/tags.schema.json",
+  "title": "dsc-plugin-collection-tags",
+  "description": "插件合集根目录的 tags.json,预设标签列表。可选文件:存在时必须被 L1 清单覆盖,不存在则不要求也不进清单。datalog.json 中每个插件的 tag 必须取自本文件。",
+  "type": "array",
+  "items": {
+    "type": "string",
+    "minLength": 1,
+    "description": "标签文本。校验脚本只要求非空字符串,不限制长度,也不限制字符集。"
+  },
+  "uniqueItems": true,
+  "$comment": "重复标签在校验脚本里只触发 TAGS_DUPLICATE 警告,不阻断;Schema 这里按契约收紧,要求标签不重复。"
+}

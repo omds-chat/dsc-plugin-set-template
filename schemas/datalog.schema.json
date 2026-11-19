@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/datalog.schema.json",
+  "title": "dsc-plugin-collection-datalog",
+  "description": "插件合集根目录的 datalog.json,合集收录的全部插件索引。合集根必需文件,由 L1 清单覆盖。plugin_name 在合集内唯一,由校验脚本查重。",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "plugin_name": {
+        "$ref": "#/$defs/pluginName"
+      },
+      "author": {
+        "type": "string",
+        "minLength": 1,
+        "description": "作者英文名,即 plugins/ 下的同名目录。校验脚本只要求非空字符串;作者目录的命名规则由 import-plugins.mjs 约束,作者是否已登记由 plugins/author_manifest.json 决定,未登记只警告。"
+      },
+      "tag": {
+        "type": "array",
+        "description": "插件标签,取自 tags.json 声明的预设标签,允许空数组。tags.json 存在时,未在 tags.json 声明的标签由校验脚本报 TAG_NOT_DECLARED。",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "required": [
+      "plugin_name",
+      "author",
+      "tag"
+    ]
+  },
+  "uniqueItems": true,
+  "$comment": "完全相同的重复条目由 uniqueItems 拒绝;两条的 tag 或 author 不同时,数组级 uniqueItems 抓不到同名的重复项,按属性去重只能由 collection-verify.mjs 的 DATALOG_DUPLICATE 保证。",
+  "$defs": {
+    "pluginName": {
+      "type": "string",
+      "description": "插件名,即插件的 npm 包名。全局包为 dsc-xxx,命名空间包为 @scope/dsc-xxx。pattern 与校验脚本的 PLUGIN_NAME_PATTERN 逐字相同。",
+      "pattern": "^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$",
+      "examples": [
+        "dsc-demo",
+        "@alice/dsc-demo"
+      ]
+    }
+  }
+}

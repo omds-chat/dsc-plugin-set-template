@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/collection-meta.schema.json",
+  "title": "dsc-plugin-collection-meta",
+  "description": "插件合集根目录的 meta.json,声明下载计数服务的开关、接口地址与 IP 上报策略。合集根必需文件,由 L1 清单覆盖。字段名全大写,与 scripts/lib/collection-verify.mjs 逐字对应。",
+  "type": "object",
+  "properties": {
+    "DOWNLOAD_COUNT_ENABLE": {
+      "type": "boolean",
+      "description": "是否启用下载计数。必填。为 true 时 DOWNLOAD_COUNT_API 与 API_NEED_IP 同时必填。"
+    },
+    "DOWNLOAD_COUNT_API": {
+      "type": "string",
+      "minLength": 1,
+      "description": "下载计数接口地址,非空字符串。校验脚本只在 DOWNLOAD_COUNT_ENABLE 为 true 时检查它;关闭计数时该字段可缺省,也可以只给 DOWNLOAD_COUNT_ENABLE 与 API_NEED_IP 两个字段,骨架 template/meta.json 即如此。"
+    },
+    "API_NEED_IP": {
+      "type": "boolean",
+      "description": "计数请求是否携带请求来源的公网 IP。启用计数时必填,关闭计数时忽略,允许缺省。"
+    }
+  },
+  "required": [
+    "DOWNLOAD_COUNT_ENABLE"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "DOWNLOAD_COUNT_ENABLE": {
+            "const": true
+          }
+        },
+        "required": [
+          "DOWNLOAD_COUNT_ENABLE"
+        ]
+      },
+      "then": {
+        "required": [
+          "DOWNLOAD_COUNT_API",
+          "API_NEED_IP"
+        ]
+      }
+    }
+  ],
+  "$comment": "校验脚本不检查未在此声明的字段,因此本文件的 additionalProperties 保持默认的允许;新增字段时必须同时改 collection-verify.mjs 里的检查与本文件。",
+  "examples": [
+    {
+      "DOWNLOAD_COUNT_ENABLE": false,
+      "API_NEED_IP": false
+    },
+    {
+      "DOWNLOAD_COUNT_ENABLE": true,
+      "DOWNLOAD_COUNT_API": "https://example.org/dsc/download-count",
+      "API_NEED_IP": true
+    }
+  ]
+}

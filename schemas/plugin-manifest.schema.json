@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/plugin-manifest.schema.json",
+  "title": "dsc-plugin-collection-plugin-manifest",
+  "description": "插件合集 plugins/<作者>/plugin_manifest.json,该作者的插件清单,由 L2 清单覆盖。每个插件名对应 plugins/<作者>/ 下一个同名目录,datalog.json 中该作者的插件必须出现在这里。",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/pluginName"
+  },
+  "uniqueItems": true,
+  "$comment": "本文件是字符串数组,uniqueItems 能完整拒绝重复插件名;校验脚本对重复项静默去重而不报错,Schema 这里按契约收紧。",
+  "$defs": {
+    "pluginName": {
+      "type": "string",
+      "description": "插件名,即插件的 npm 包名。全局包为 dsc-xxx,命名空间包为 @scope/dsc-xxx。pattern 与校验脚本的 PLUGIN_NAME_PATTERN 逐字相同。",
+      "pattern": "^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$",
+      "examples": [
+        "dsc-demo",
+        "@alice/dsc-demo"
+      ]
+    }
+  }
+}

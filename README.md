@@ -32,8 +32,15 @@ dsc 插件合集模板。照抄本仓库,可以快速得到一个符合分发规
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── schemas/
-│   ├── runtime/meta.json                   插件运行时元数据
-│   └── collection/                         合集元数据、清单、版本
+│   ├── README.md                           Schema 索引与脚本校验对照
+│   ├── manifest.schema.json                三层哈希清单 manifest.json
+│   ├── collection-meta.schema.json         合集根 meta.json
+│   ├── datalog.schema.json                 合集根 datalog.json
+│   ├── tags.schema.json                    合集根 tags.json
+│   ├── author-manifest.schema.json         plugins/author_manifest.json
+│   ├── plugin-manifest.schema.json         plugins/<作者>/plugin_manifest.json
+│   ├── versions.schema.json                plugins/<作者>/<插件>/versions.json
+│   └── runtime/meta.json                   插件运行时元数据
 ├── scripts/
 │   ├── pki.mjs                             OpenSSL PKI 封装
 │   ├── build-collection.mjs                签名、校验并生成分发内容
@@ -180,6 +187,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 - L3 不覆盖 `plugin.js` 与 `plugin.js.sig`:产物本体由每个版本的 `plugin.js.sig` 独立签名,清单只描述元数据。
 - `tags.json` 可选:存在就必须被 L1 清单覆盖,不存在则不报错、也不进清单。
 - `meta.json.sig` 已取消,版本目录的合集签名只剩 `plugin.js.sig`;`plugin.js.author.sig` 可选保留。`meta.json.author.sig` 同样取消:meta.json 由 L3 清单覆盖并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。`dsc-plugin-template` 仓库仍在产出该文件,待同步。
+- `meta.json`、`datalog.json`、`tags.json`、`plugins/author_manifest.json`、`plugins/<作者>/plugin_manifest.json`、`plugins/<作者>/<插件>/versions.json` 与三层 `manifest.json` 各有 JSON Schema,全部收在 `schemas/`;索引与「哪条脚本规则对应哪个约束」的对照表见 [`schemas/README.md`](schemas/README.md)。
 
 三层之间不做收束:L1 不引用 L2,L2 不引用 L3,任何一层都可以单独发布、单独校验、单独重签。取舍是放弃「一次校验拿到全树摘要」,换取按插件增量更新:改一个插件只需 L3 的 `revision` 加一,L2 与 L1 的 `revision` 不变,客户端也只重新拉取这一层的清单与签名。若把三层收束成一份根清单,任何插件发版都会改动根清单,所有客户端都得重拉整份摘要。
 
