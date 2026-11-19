@@ -1,6 +1,10 @@
 # 占位证书,不是由根 CA 签发,也不能用于任何真实签名。
-# 使用前必须用根 CA(DeepSeek-Chat-Enhanced 仓库)签发的 eec.pem 覆盖本文件,
+# 终端签名证书按 certs/<合集 id>-eec.crt 读取,合集 id 依次取 --collection-name、分发目录
+# build-info.json 的 collection、合集目录名。本文件按骨架目录名命名为 template-eec.crt;
+# 复制到新仓库后必须改名为 certs/<新仓库目录名>-eec.crt,例如 certs/awesome-dsc-plugin-eec.crt。
+# 使用前用根 CA(DeepSeek-Chat-Enhanced 仓库)签发的证书覆盖本文件,
 # 并把配套的 EEC 私钥放入 CI secret EEC_SECRET_KEY。详见 README 的签名章节。
+# 旧的根目录 eec.pem 仍可读取,但只为兼容旧合集保留,新合集不要使用。
 -----BEGIN CERTIFICATE-----
 MIIB0zCCAXqgAwIBAgIUEjPiKO8tTrYZ7znBnvYJQWmje0cwCgYIKoZIzj0EAwIw
 OTESMBAGA1UECgwJb21kc2MtZGV2MSMwIQYDVQQDDBpwbGFjZWhvbGRlci1lZWMt

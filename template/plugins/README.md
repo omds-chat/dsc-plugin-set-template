@@ -7,7 +7,8 @@
 `plugins/<author>/`
 
 - 目录名即作者英文名称,必须与 `datalog.json` 的 `author`、`plugins/author_manifest.json` 的 `username` 一致。
-- 仅允许小写字母、数字、连字符,不得以连字符开头或结尾。
+- 目录名必须是合法的 GitHub 用户名,与 GitHub 自身的规则一致:字母或数字开头,其后为字母、数字或单个连字符,不得以连字符结尾,长度不超过 39,不区分大小写。正则写在 `scripts/lib/collection-verify.mjs` 的 `AUTHOR_NAME_PATTERN`,即 `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`(带 `i` 标志),Schema 见 `schemas/author-manifest.schema.json` 的 `username.pattern`。
+- 目录名不符时 `pnpm verify` 报 `AUTHOR_DIR_NAME_INVALID`,并指出具体的 `plugins/<目录>`。
 
 | 文件 | 必需 | 说明 |
 |:---:|:---:|:---:|
@@ -20,7 +21,8 @@
 
 `plugins/<author>/<plugin>/`
 
-- 目录名取插件 npm 包名去掉命名空间前缀,例如 `@alice/dsc-demo` 写作 `dsc-demo`。
+- 目录名取插件 npm 包名去掉命名空间前缀,例如 `@alice/dsc-demo` 写作 `dsc-demo`,因此目录名必然以 `dsc-` 开头。
+- 插件名必须带 `dsc-` 前缀:全局包为 `dsc-xxx`,命名空间包为 `@scope/dsc-xxx`。`datalog.json` 的 `plugin_name` 与 `plugin_manifest.json` 的每一项都按 `scripts/lib/collection-verify.mjs` 的 `PLUGIN_NAME_PATTERN` 校验,缺前缀时 `pnpm verify` 分别报 `DATALOG_INVALID`、`PLUGIN_MANIFEST_INVALID`。
 - 目录内必需 `versions.json`:
 
 ```json
@@ -68,4 +70,9 @@ plugins/
         plugin.js.author.sig
 ```
 
-合集根目录还需要 `eec.pem`、`datalog.json`、`meta.json`、`tags.json`,以及 L1 清单 `manifest.json` 与 `manifest.json.sig`。合集的可信性由 `eec.pem` 的证书链证明,不另发信任签名。
+合集根目录还需要 `certs/<合集 id>-eec.crt`(终端签名证书)、`datalog.json`、`meta.json`、`tags.json`,以及 L1 清单 `manifest.json` 与 `manifest.json.sig`。合集的可信性由终端签名证书的证书链证明,不另发信任签名。
+
+终端签名证书的解析顺序:
+
+1. `certs/<合集 id>-eec.crt` —— 现行布局,新证书一律放这里。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,不写死任何具体合集名。
+2. `eec.pem` —— 旧布局回退,仅为兼容尚未迁移的旧合集保留,新合集不得使用,该回退在后续版本删除。命中旧布局时 `pnpm verify` 与 `pnpm build` 都会报 `EEC_LEGACY_LAYOUT` 提示,并给出应改成的文件名。

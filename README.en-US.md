@@ -49,7 +49,8 @@ This repository is not a plugin collection. It ships the skeleton and the specif
 │   ├── import-plugins.mjs                  import plugins from a manifest
 │   └── lib/collection-verify.mjs           shared verification logic
 └── template/                               collection skeleton, copy and use
-    ├── eec.pem                             placeholder certificate, must be replaced
+    ├── certs/
+    │   └── template-eec.crt                placeholder certificate, must be replaced
     ├── meta.json
     ├── datalog.json
     ├── tags.json
@@ -62,18 +63,19 @@ This repository is not a plugin collection. It ships the skeleton and the specif
 ## Create a collection from this template
 
 1. Create a new repository and copy everything under `template/` to its root.
-2. Generate the EEC private key and a certificate signing request locally:
+2. Also copy `scripts/`, `package.json`, `schemas/` and `.github/` from the root of this template repository into the new repository root. `template/` ships the collection data skeleton only and deliberately excludes those four: without `package.json` and `scripts/` there is no `pnpm verify` or `pnpm build`, without `schemas/` the written contract is gone, and without `.github/` there is no plugin source manifest and no build-and-deploy pipeline. Adjust the placeholders afterwards: `name` and `repository` in `package.json`, the deployment settings in `.github/workflows/build-and-deploy.yml`, and the certificate file name described in step 4.
+3. Generate the EEC private key and a certificate signing request locally:
 
 ```bash
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out eec_secret.pem
 openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collection-name>'
 ```
 
-3. Hand `eec.csr` to the root CA (the `DeepSeek-Chat-Enhanced` repository) and overwrite the root `eec.pem` with the issued certificate. The `eec.pem` shipped in the skeleton is a placeholder and must not be used for real signing.
-4. Put `eec_secret.pem` into the CI secret `EEC_SECRET_KEY`. Put the root certificate into `secrets.ROOT_CA_PEM`, or put the online-data URL of the root certificate into `vars.ROOT_CA_URL`. Never commit a private key.
-5. Edit `meta.json`. Download counting is off by default. To enable it, set `DOWNLOAD_COUNT_ENABLE` to `true` and provide both `DOWNLOAD_COUNT_API` and `API_NEED_IP`.
-6. Create author and plugin directories under `plugins/`. Naming rules and required files are in `template/plugins/README.md`. Register plugins in `datalog.json`, declare preset tags in `tags.json` and register authors in `plugins/author_manifest.json`.
-7. Register plugin sources in `.github/plugins-sources.json`, run `pnpm import` to import them, run `pnpm verify` to confirm consistency, then run `pnpm build` to produce `dist/`.
+4. Hand `eec.csr` to the root CA (the `DeepSeek-Chat-Enhanced` repository) and write the issued certificate to `certs/<collection id>-eec.crt`. The collection id comes from `--collection-name`, otherwise from the `collection` field of `build-info.json` in a distribution directory, otherwise from the collection directory name, which for a new collection is normally its repository name. `template/certs/template-eec.crt` is a placeholder and must not be used for real signing; rename it to the new collection id after copying.
+5. Put `eec_secret.pem` into the CI secret `EEC_SECRET_KEY`. Put the root certificate into `secrets.ROOT_CA_PEM`, or put the online-data URL of the root certificate into `vars.ROOT_CA_URL`. Never commit a private key.
+6. Edit `meta.json`. Download counting is off by default. To enable it, set `DOWNLOAD_COUNT_ENABLE` to `true` and provide both `DOWNLOAD_COUNT_API` and `API_NEED_IP`.
+7. Create author and plugin directories under `plugins/`. Naming rules and required files are in `template/plugins/README.md`. Register plugins in `datalog.json`, declare preset tags in `tags.json` and register authors in `plugins/author_manifest.json`.
+8. Register plugin sources in `.github/plugins-sources.json`, run `pnpm import` to import them, run `pnpm verify` to confirm consistency, then run `pnpm build` to produce `dist/`.
 
 ## Signing and the certificate chain
 
@@ -82,8 +84,19 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collec
 | Role | Holder | Material | Responsibility |
 |:---:|:---:|:---:|:---:|
 | Root CA | `DeepSeek-Chat-Enhanced` repository | root private key (offline, never committed), root certificate | Issue end-entity signing certificates (EEC), maintain the revocation list |
-| End-entity signer (EEC) | a collection repository such as `awesome-dsc-plugin` | EEC private key (CI secret), `eec.pem` | Sign plugin files with detached CMS signatures |
+| End-entity signer (EEC) | a collection repository such as `awesome-dsc-plugin` | EEC private key (CI secret), `certs/<collection id>-eec.crt` | Sign plugin files with detached CMS signatures |
 | Independent signer | plugin authors, omdsc-dev included | author key pair | Append an author signature with a bare public key |
+
+### Certificate location
+
+The end-entity signing certificate lives in `certs/` under the collection root, and its file name is derived from the collection id. The lookup order is fixed:
+
+| # | Path | Notes |
+|:---:|:---:|:---:|
+| 1 | `certs/<collection id>-eec.crt` | current layout, every new certificate goes here |
+| 2 | `eec.pem` | legacy layout, kept only to read collections that have not migrated; never use it for a new collection, and the fallback is removed in a later release |
+
+The collection id is resolved as `--collection-name` when given, otherwise the `collection` field of `build-info.json` in the directory (that is how the distribution directory `dist/` reads it back), otherwise the collection directory name. The template repository itself uses its directory name, so its placeholder is `template/certs/template-eec.crt`. On a legacy hit both `pnpm verify` and `pnpm build` report `EEC_LEGACY_LAYOUT` and name the file to use instead. `pnpm build` copies the whole `certs/` directory into `dist/`, and still copies a root `eec.pem` when one is present so that older verifiers keep working.
 
 ### Algorithms and formats
 
@@ -111,15 +124,15 @@ The root CA issues the EEC. Note that `openssl x509 -req` rejects `-addext`, so 
 
 ```bash
 openssl x509 -req -in eec.csr -CA root_ca.crt -CAkey root_secret.pem -CAcreateserial \
-  -out eec.pem -days 365 \
+  -out certs/<collection id>-eec.crt -days 365 \
   -extfile <(printf 'keyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\n')
 ```
 
 Collection signing and verification. The three manifests and `plugin.js` share one command and differ only in the file name:
 
 ```bash
-openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer eec.pem -inkey eec_secret.pem -nocerts -noattr
-openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile eec.pem
+openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer certs/<collection id>-eec.crt -inkey eec_secret.pem -nocerts -noattr
+openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile certs/<collection id>-eec.crt
 ```
 
 `-md sha512` pins the digest algorithm instead of relying on the OpenSSL default. `-outform DER` is not optional. The default output is an S/MIME `multipart/signed` wrapper, which browsers cannot parse, and the plugin market verifies signatures in the browser. DER is therefore the cross-repository format: signers always pass `-outform DER` and verifiers always pass `-inform DER`, and either side falling back to the default format breaks verification. Confirm the artifact with `openssl asn1parse -inform DER -in manifest.json.sig`.
@@ -139,7 +152,8 @@ To enable revocation checking, concatenate the root certificate and the CRL into
 
 ```text
 <collection>/
-├── eec.pem                    # end-entity signing certificate, shipped with Pages, covered by no manifest
+├── certs/
+│   └── <collection id>-eec.crt# end-entity signing certificate, shipped with Pages, covered by no manifest
 ├── meta.json                  # L1
 ├── datalog.json               # L1
 ├── tags.json                  # L1
@@ -213,19 +227,21 @@ The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocert
 
 | # | Rule |
 |:---:|:---:|
-| 1 | `eec.pem` exists in the root, chains to the given root certificate (`--root-ca` or `ROOT_CA_PATH`), is not expired, has `digitalSignature` in `keyUsage` and is not a CA |
+| 1 | The end-entity signing certificate exists: `certs/<collection id>-eec.crt` is looked up first, and only when it is missing does the verifier fall back to a legacy root `eec.pem` and report `EEC_LEGACY_LAYOUT`; it chains to the given root certificate (`--root-ca` or `ROOT_CA_PATH`), is not expired, has `digitalSignature` in `keyUsage` and is not a CA |
 | 2 | Every plugin in `datalog.json` appears in `plugins/<author>/plugin_manifest.json` and its plugin directory exists |
 | 3 | Every plugin directory has `versions.json` and `latest` is present in `versions` |
-| 4 | Every version directory has `meta.json`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -md sha512 -inform DER -CAfile <root> -certfile eec.pem`; a failure is an error |
+| 4 | Every version directory has `meta.json`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -md sha512 -inform DER -CAfile <root> -certfile certs/<collection id>-eec.crt`; a failure is an error |
 | 5 | When `plugin.js.author.sig` exists in a version directory, `plugins/<author>/author_pub.pem` must exist and the signature must verify with `openssl pkeyutl -verify`; a failure is an error. Other `*.author.sig` files are not checked |
 | 6 | When `tags.json` exists, every `tag` in `datalog.json` comes from it |
 | 7 | All three manifests exist and are structurally valid: `schemaVersion` is 1, `revision` is a positive integer, `files` is a non-empty array, and each entry holds only `path` and `sha512` |
 | 8 | Every `path` is valid: forward slashes, relative, no `..`, not the manifest itself, no duplicates |
 | 9 | Coverage matches the layer exactly: every required file is listed and nothing extra is, so L3 never lists `plugin.js` or `plugin.js.sig` |
 | 10 | Every recorded SHA-512 matches the file contents, and a mismatch names the layer and the file |
-| 11 | Every `manifest.json.sig` verifies against the root certificate and `eec.pem`; a failure is an error |
+| 11 | Every `manifest.json.sig` verifies against the root certificate and the end-entity certificate; a failure is an error |
+| 12 | Author directory names, `author` in `datalog.json` and `username` in `plugins/author_manifest.json` must all be valid GitHub usernames: `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`, case-insensitive, at most 39 characters, with no leading or trailing hyphen. A directory name that does not match reports `AUTHOR_DIR_NAME_INVALID` and names `plugins/<directory>`; a mismatched `author` or `username` reports `DATALOG_INVALID` or `AUTHOR_MANIFEST_INVALID` |
+| 13 | Plugin names must carry the `dsc-` prefix. `plugin_name` in `datalog.json` and every entry of `plugins/<author>/plugin_manifest.json` are checked against `PLUGIN_NAME_PATTERN`, that is `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`; a missing prefix reports `DATALOG_INVALID` or `PLUGIN_MANIFEST_INVALID` |
 
-`pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: a missing root certificate, an `eec.pem` that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. A real collection's CI does not pass that flag; `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
+`pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: a missing root certificate, an end-entity certificate that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. A real collection's CI does not pass that flag; `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
 
 The scripts here are a strict pre-release gate: apart from the flags above, any error blocks the release.
 
@@ -254,7 +270,7 @@ The scripts here are a strict pre-release gate: apart from the flags above, any 
 
 - Locally: run `pnpm install`, then `pnpm verify`. `pnpm build` first materialises the three manifests, then verifies, then writes distribution content to `dist/`; with `--sign` it signs the three manifests and every version's `plugin.js` with `EEC_SECRET_KEY`.
 - The three `manifest.json` and `manifest.json.sig` files must be committed together with the collection source. A revision is read back from the previous manifest of the same layer, so leaving them out of version control resets every layer to 1 on a fresh checkout and breaks revision continuity across CI runs.
-- Automation: a push to main or a manual `build-and-deploy` run installs dependencies, imports plugins from the manifest, resolves the root certificate, checks the `eec.pem` chain with `openssl verify`, signs with `EEC_SECRET_KEY` and builds `dist/`, runs a full verification on `dist/` and finally publishes to Pages.
+- Automation: a push to main or a manual `build-and-deploy` run installs dependencies, imports plugins from the manifest, resolves the root certificate, checks the chain of the end-entity signing certificate with `openssl verify`, signs with `EEC_SECRET_KEY` and builds `dist/`, runs a full verification on `dist/` and finally publishes to Pages.
 - The root certificate comes from one of two places: `secrets.ROOT_CA_PEM` (PEM text) wins, otherwise `vars.ROOT_CA_URL` is fetched from the online-data branch.
 - Signing keys come from secrets only. No private key is ever stored in the repository.
 - Distribution must allow cross-origin access, and must allow `omdsc-dev.github.io` at the very least.
@@ -262,9 +278,9 @@ The scripts here are a strict pre-release gate: apart from the flags above, any 
 ## Security notes
 
 - Keep the root private key offline and use it only to issue EECs or generate a CRL. Keep the EEC private key and author keys in CI secrets and local environment variables. `.gitignore` already excludes `.env`.
-- If `eec.pem` is replaced or the private key leaks, ask the root CA to revoke it and issue a new one. Once `crl.pem` exists, verifiers add `--crl_check` and the revocation takes effect.
+- If the end-entity signing certificate is replaced or the private key leaks, ask the root CA to revoke it and issue a new one. Once `crl.pem` exists, verifiers add `--crl_check` and the revocation takes effect.
 - Signatures cover file bytes. CMS signatures use `-binary` and author signatures use `-rawin`, so both are byte-exact: any change to line endings, indentation or whitespace breaks verification, and converting LF to CRLF fails as well. The repository uses LF everywhere.
-- `build-collection.mjs --sign` first confirms that `EEC_SECRET_KEY` matches the committed `eec.pem` and fails otherwise, so it never produces signatures nobody can verify.
+- `build-collection.mjs --sign` first confirms that `EEC_SECRET_KEY` matches the committed end-entity signing certificate and fails otherwise, so it never produces signatures nobody can verify.
 - Never bypass a failed verification. The messages name the exact file and the reason.
 
 ## License

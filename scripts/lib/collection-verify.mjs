@@ -1,7 +1,7 @@
 /**
  * 合集自洽性校验(PKI 版)。
  *
- * 校验对象是分发规范 v2 的合集目录结构:根目录的终端签名证书、三层哈希清单、
+ * 校验对象是分发规范 v2 的合集目录结构:certs/ 下的终端签名证书、三层哈希清单、
  * 作者公钥、插件清单、版本目录与逐文件 CMS 签名。只读取文件,不修改任何内容;
  * build-collection.mjs 与 verify-collection.mjs 共用本模块。
  *
@@ -13,26 +13,32 @@
  */
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   AUTHOR_PUB_FILE,
-  EEC_CERT_FILE,
   MANIFEST_FILE,
   ROOT_CA_FILE,
   VERSION_AUTHOR_SIGNED_FILES,
   VERSION_SIGNED_FILES,
   authorSignaturePath,
   cmsSignaturePath,
+  collectionIdSourceLabel,
   describeCertificate,
   describePublicKey,
   hasDigitalSignature,
+  legacyEecNotice,
+  resolveEecCertPath,
   verifyChain,
   verifyFileAuthor,
   verifyFileCms,
 } from '../pki.mjs'
 
-/** 合集根目录必需的文件。tags.json 可选,存在时才要求被 L1 清单覆盖 */
-export const ROOT_REQUIRED_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json']
+/**
+ * 合集根目录必需的文件。tags.json 可选,存在时才要求被 L1 清单覆盖。
+ * 终端签名证书不在本表:它的位置由 resolveEecCertPath 按 certs/<合集 id>-eec.crt 解析,
+ * 并对旧的根目录 eec.pem 回退,不能写死成根目录文件。
+ */
+export const ROOT_REQUIRED_FILES = ['meta.json', 'datalog.json']
 /** 版本目录内必需的文件。meta.json.sig 已取消,产物本体只由 plugin.js.sig 签名 */
 export const VERSION_REQUIRED_FILES = ['meta.json', 'plugin.js', 'plugin.js.sig']
 /** 作者目录内的公钥文件名 */
@@ -57,7 +63,39 @@ export const LAYER3_EXCLUDED_FILES = ['plugin.js', 'plugin.js.sig']
 export { MANIFEST_FILE, VERSION_SIGNED_FILES, VERSION_AUTHOR_SIGNED_FILES }
 
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+/**
+ * 插件名:必须是 npm 包名且带 dsc- 前缀,全局包为 dsc-xxx,命名空间包为 @scope/dsc-xxx。
+ * 与 scripts/import-plugins.mjs 的 PLUGIN_PATTERN 以及 schemas 下三处 pluginName.pattern 逐字相同;
+ * datalog.json 的 plugin_name 与 plugins/<作者>/plugin_manifest.json 的每一项都按本正则校验。
+ */
 const PLUGIN_NAME_PATTERN = /^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*\/dsc-[a-z0-9][a-z0-9._-]*)$/
+
+/**
+ * GitHub 用户名的合法形式,与 GitHub 自身的规则一致:字母或数字开头,其后为字母、数字或
+ * 单个连字符,不得以连字符结尾、不得出现连续连字符,长度上限 39。GitHub 的账号校验不区分大小写,
+ * 因此本正则带 i 标志;作者目录名、datalog.json 的 author 与 author_manifest.json 的 username
+ * 共用这一套规则,三处不一致时由 AUTHOR_DIR_NAME_INVALID 等错误指出具体位置。
+ */
+export const AUTHOR_NAME_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
+/** GitHub 用户名的长度上限 */
+export const AUTHOR_NAME_MAX_LENGTH = 39
+
+/**
+ * 作者名不合法的原因。作者目录名、datalog.json 的 author 与 plugins/author_manifest.json 的
+ * username 本就要求同一份取值,规则分裂只会让文档与代码对不上,所以共用本函数。
+ * @param {unknown} name 作者名
+ * @returns {string|null} 不合法时返回原因,合法返回 null
+ */
+export function authorNameProblem(name) {
+  if (typeof name !== 'string' || name.length === 0) return '必须是非空字符串'
+  if (name.length > AUTHOR_NAME_MAX_LENGTH) {
+    return '长度不得超过 ' + AUTHOR_NAME_MAX_LENGTH + ' 个字符,实际为 ' + name.length
+  }
+  if (!AUTHOR_NAME_PATTERN.test(name)) {
+    return '只允许字母、数字与单个连字符,不得以连字符开头或结尾'
+  }
+  return null
+}
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -154,7 +192,7 @@ export function manifestPathProblem(rel) {
  * @returns {void}
  */
 function verifyLayerManifest(context) {
-  const { layer, layerRel, layerDir, expectedFiles, report, rootCaPath, eecPath, cmsReady, missingLevel, stats } = context
+  const { layer, layerRel, layerDir, expectedFiles, report, rootCaPath, eecPath, eecRel, cmsReady, missingLevel, stats } = context
   const layerLabel = layer + '(' + (layerRel || '.') + ')'
   const manifestRel = layerRel ? layerRel + '/' + MANIFEST_FILE : MANIFEST_FILE
   const manifestPath = join(layerDir, MANIFEST_FILE)
@@ -269,7 +307,7 @@ function verifyLayerManifest(context) {
   if (!isFile(sigPath)) {
     report[missingLevel]('MANIFEST_SIGNATURE_MISSING', layerLabel + ' 缺少清单签名 ' + MANIFEST_FILE + MANIFEST_SIGNATURE_SUFFIX, sigRel)
   } else if (!cmsReady) {
-    report.warn('SIGN_UNVERIFIABLE', sigRel + ' 无法校验,缺少根证书或 ' + EEC_CERT_FILE, sigRel)
+    report.warn('SIGN_UNVERIFIABLE', sigRel + ' 无法校验,缺少根证书或 ' + eecRel, sigRel)
   } else {
     const result = verifyFileCms(manifestPath, sigPath, rootCaPath, eecPath)
     if (!result.ok) {
@@ -292,7 +330,7 @@ function verifyLayerManifest(context) {
  * @param {object} context 校验上下文
  * @returns {void}
  */
-function verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, allowMissingManifest }) {
+function verifyManifests({ root, report, stats, rootCaPath, eecPath, eecRel, cmsReady, allowMissingManifest }) {
   const missingLevel = allowMissingManifest ? 'warn' : 'error'
   verifyLayerManifest({
     layer: 'L1',
@@ -302,6 +340,7 @@ function verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, a
     report,
     rootCaPath,
     eecPath,
+    eecRel,
     cmsReady,
     missingLevel,
     stats,
@@ -319,6 +358,7 @@ function verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, a
       report,
       rootCaPath,
       eecPath,
+      eecRel,
       cmsReady,
       missingLevel,
       stats,
@@ -335,6 +375,7 @@ function verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, a
         report,
         rootCaPath,
         eecPath,
+        eecRel,
         cmsReady,
         missingLevel,
         stats,
@@ -360,8 +401,8 @@ export function resolveRootCaPath(options = {}, env = process.env) {
  * @param {string} collectionDir 合集根目录
  * @param {object} [options] 选项
  * @param {string|null} [options.rootCaPath] 根证书路径,缺失时无法校验证书链与 CMS 签名
- * @param {boolean} [options.allowPlaceholderEec] 骨架模式:根证书缺失或 eec.pem 未由根 CA 签发时降级为警告
- * @param {string} [options.collectionName] 合集名称,默认取目录名
+ * @param {boolean} [options.allowPlaceholderEec] 骨架模式:根证书缺失或终端签名证书未由根 CA 签发时降级为警告
+ * @param {string} [options.collectionName] 合集名称,默认取目录名;同时决定终端签名证书的文件名 certs/<合集 id>-eec.crt
  * @returns {{ok: boolean, root: string, collectionName: string, errorCount: number, warningCount: number, problems: Array<object>, stats: object}}
  */
 export function verifyCollection(collectionDir, options = {}) {
@@ -379,9 +420,14 @@ export function verifyCollection(collectionDir, options = {}) {
   const skeleton = options.allowPlaceholderEec === true
   // 骨架模式与 --allow-missing-manifest 都把「清单尚未生成」降级为警告,结构与哈希检查照常执行。
   const allowMissingManifest = options.allowMissingManifest === true || skeleton
-  const collectionName = options.collectionName || basename(root)
   const rootCaPath = options.rootCaPath ? resolve(options.rootCaPath) : null
-  const eecPath = join(root, EEC_CERT_FILE)
+  // 终端签名证书按 certs/<合集 id>-eec.crt 解析,旧的根目录 eec.pem 只作兼容回退。
+  // 合集名与证书文件名同源:显式名称 > build-info.json 的 collection > 目录名,
+  // 因此校验分发目录 dist/ 时报出的合集名仍是真实合集名,而不是 dist。
+  const eec = resolveEecCertPath(root, options)
+  const collectionName = options.collectionName || eec.collectionId
+  const eecPath = eec.path
+  const eecRel = eec.rel
 
   const finish = () => {
     const errorCount = problems.filter((item) => item.level === 'error').length
@@ -427,45 +473,52 @@ export function verifyCollection(collectionDir, options = {}) {
   // 三、终端签名证书与证书链
   const chainLevel = skeleton ? 'warn' : 'error'
   let eecParsed = false
-  if (!isFile(eecPath)) {
-    report.error('EEC_MISSING', '根目录缺少终端签名证书 ' + EEC_CERT_FILE, EEC_CERT_FILE)
+  if (!eec.exists) {
+    report.error(
+      'EEC_MISSING',
+      '缺少终端签名证书:既没有 ' + eec.candidates[0].rel +
+        '(合集 id 为 ' + JSON.stringify(eec.collectionId) + ',' + collectionIdSourceLabel(eec.collectionIdSource) + '),' +
+        '也没有旧布局的 ' + eec.candidates[1].rel,
+      eec.candidates[0].rel,
+    )
   } else {
+    if (eec.layout === 'legacy') report.warn('EEC_LEGACY_LAYOUT', legacyEecNotice(eec), eecRel)
     let cert = null
     try {
       cert = describeCertificate(eecPath)
       eecParsed = true
     } catch (error) {
-      report.error('EEC_INVALID', EEC_CERT_FILE + ' 不是可解析的 X.509 证书:' + error.message, EEC_CERT_FILE)
+      report.error('EEC_INVALID', eecRel + ' 不是可解析的 X.509 证书:' + error.message, eecRel)
     }
     if (cert) {
       if (!rootCaPath) {
         report[chainLevel](
           'ROOT_CA_MISSING',
-          '未提供根证书,无法校验 ' + EEC_CERT_FILE + ' 的签发链;请用 --root-ca 或环境变量 ROOT_CA_PATH 提供',
-          EEC_CERT_FILE,
+          '未提供根证书,无法校验 ' + eecRel + ' 的签发链;请用 --root-ca 或环境变量 ROOT_CA_PATH 提供',
+          eecRel,
         )
       } else if (!isFile(rootCaPath)) {
         report[chainLevel]('ROOT_CA_MISSING', '根证书文件不存在:' + rootCaPath, null)
       } else {
         const chain = verifyChain(eecPath, rootCaPath)
         if (!chain.ok) {
-          report[chainLevel]('EEC_NOT_CHAINED', EEC_CERT_FILE + ' 不是由给定根证书签发:' + chain.reason, EEC_CERT_FILE)
+          report[chainLevel]('EEC_NOT_CHAINED', eecRel + ' 不是由给定根证书签发:' + chain.reason, eecRel)
         }
       }
       if (!cert.validNow) {
-        report.error('EEC_EXPIRED', EEC_CERT_FILE + ' 已过期,notAfter=' + String(cert.notAfter), EEC_CERT_FILE)
+        report.error('EEC_EXPIRED', eecRel + ' 已过期,notAfter=' + String(cert.notAfter), eecRel)
       }
       if (!hasDigitalSignature(cert.keyUsage)) {
         report.error(
           'EEC_KEY_USAGE',
-          EEC_CERT_FILE + ' 的 keyUsage 不含 digitalSignature,实际为 [' + cert.keyUsage.join(', ') + ']',
-          EEC_CERT_FILE,
+          eecRel + ' 的 keyUsage 不含 digitalSignature,实际为 [' + cert.keyUsage.join(', ') + ']',
+          eecRel,
         )
       }
       if (cert.isCa === true) {
-        report.error('EEC_IS_CA', EEC_CERT_FILE + ' 是 CA 证书,要求 basicConstraints 为 CA:FALSE', EEC_CERT_FILE)
+        report.error('EEC_IS_CA', eecRel + ' 是 CA 证书,要求 basicConstraints 为 CA:FALSE', eecRel)
       } else if (cert.isCa === null) {
-        report.warn('EEC_BASIC_CONSTRAINTS', EEC_CERT_FILE + ' 缺少 basicConstraints 扩展,建议显式声明 CA:FALSE', EEC_CERT_FILE)
+        report.warn('EEC_BASIC_CONSTRAINTS', eecRel + ' 缺少 basicConstraints 扩展,建议显式声明 CA:FALSE', eecRel)
       }
     }
   }
@@ -513,8 +566,14 @@ export function verifyCollection(collectionDir, options = {}) {
           report.error('DATALOG_INVALID', label + ' 的 plugin_name 不是合法的插件名', 'datalog.json')
           continue
         }
-        if (typeof entry.author !== 'string' || entry.author.length === 0) {
-          report.error('DATALOG_INVALID', label + ' 的 author 必须是非空字符串', 'datalog.json')
+        const authorProblem = authorNameProblem(entry.author)
+        if (authorProblem) {
+          report.error(
+            'DATALOG_INVALID',
+            label + ' 的 author ' + JSON.stringify(entry.author) + ' 不是合法的 GitHub 用户名:' +
+              authorProblem + ';它必须与 plugins/ 下的目录同名',
+            'datalog.json',
+          )
           continue
         }
         if (!Array.isArray(entry.tag) || entry.tag.some((tag) => typeof tag !== 'string' || tag.length === 0)) {
@@ -551,8 +610,18 @@ export function verifyCollection(collectionDir, options = {}) {
       } else {
         for (const [index, item] of manifest.entries()) {
           const label = 'plugins/author_manifest.json 第 ' + index + ' 项'
-          if (!isObject(item) || typeof item.username !== 'string' || item.username.length === 0) {
-            report.error('AUTHOR_MANIFEST_INVALID', label + ' 缺少合法的 username', 'plugins/author_manifest.json')
+          if (!isObject(item)) {
+            report.error('AUTHOR_MANIFEST_INVALID', label + ' 必须是对象', 'plugins/author_manifest.json')
+            continue
+          }
+          const usernameProblem = authorNameProblem(item.username)
+          if (usernameProblem) {
+            report.error(
+              'AUTHOR_MANIFEST_INVALID',
+              label + ' 的 username ' + JSON.stringify(item.username) + ' 不是合法的 GitHub 用户名:' +
+                usernameProblem + ';它必须与 plugins/ 下的目录同名',
+              'plugins/author_manifest.json',
+            )
             continue
           }
           if (typeof item.profile !== 'string' || item.profile.length === 0) {
@@ -567,7 +636,20 @@ export function verifyCollection(collectionDir, options = {}) {
     }
   }
 
-  // 七、逐插件校验
+  // 七、作者目录命名。目录名是发布面的作者标识,必须与 GitHub 用户名同一套规则:
+  // 目录名不合法时,该作者既无法被 GitHub 主页引用,也只能靠人工发现,因此在发布前拦住并指出目录。
+  for (const author of listDirectoryNames(join(root, 'plugins'))) {
+    const problem = authorNameProblem(author)
+    if (problem) {
+      report.error(
+        'AUTHOR_DIR_NAME_INVALID',
+        '作者目录名 ' + JSON.stringify(author) + ' 不是合法的 GitHub 用户名:' + problem,
+        'plugins/' + author,
+      )
+    }
+  }
+
+  // 八、逐插件校验
   const authorCache = new Map()
   for (const entry of entries) {
     const author = entry.author
@@ -586,13 +668,13 @@ export function verifyCollection(collectionDir, options = {}) {
         'plugins/' + author + '/plugin_manifest.json',
       )
     }
-    inspectPlugin({ authorContext, entry, report, stats, rootCaPath, eecPath, cmsReady })
+    inspectPlugin({ authorContext, entry, report, stats, rootCaPath, eecPath, eecRel, cmsReady })
   }
 
   for (const context of authorCache.values()) stats.authors += 1
 
-  // 八、三层哈希清单
-  verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, allowMissingManifest })
+  // 九、三层哈希清单
+  verifyManifests({ root, report, stats, rootCaPath, eecPath, eecRel, cmsReady, allowMissingManifest })
 
   return finish()
 }
@@ -644,7 +726,7 @@ function inspectAuthor({ root, author, report, stats }) {
   return { author, authorDir, authorRel, pubPath, pubRel, publicKeyUsable, manifestPlugins, stats }
 }
 
-function inspectPlugin({ authorContext, entry, report, stats, rootCaPath, eecPath, cmsReady }) {
+function inspectPlugin({ authorContext, entry, report, stats, rootCaPath, eecPath, eecRel, cmsReady }) {
   const { author, authorDir, authorRel, pubPath, pubRel, publicKeyUsable } = authorContext
   const dirName = entry.plugin_name.split('/').pop()
   const pluginRel = authorRel + '/' + dirName
@@ -698,7 +780,7 @@ function inspectPlugin({ authorContext, entry, report, stats, rootCaPath, eecPat
       }
     }
     inspectVersionMeta({ versionDir, versionRel, version, pluginName: entry.plugin_name, report })
-    inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, eecPath, cmsReady, authorPubPath: pubPath, authorPubRel: pubRel, authorPubUsable: publicKeyUsable, author })
+    inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, eecPath, eecRel, cmsReady, authorPubPath: pubPath, authorPubRel: pubRel, authorPubUsable: publicKeyUsable, author })
   }
 }
 
@@ -719,7 +801,7 @@ function inspectVersionMeta({ versionDir, versionRel, version, pluginName, repor
   }
 }
 
-function inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, eecPath, cmsReady, authorPubPath, authorPubRel, authorPubUsable, author }) {
+function inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, eecPath, eecRel, cmsReady, authorPubPath, authorPubRel, authorPubUsable, author }) {
   // 合集 CMS 签名:版本目录只剩 plugin.js.sig,meta.json 由 L3 清单覆盖
   for (const name of VERSION_SIGNED_FILES) {
     const filePath = join(versionDir, name)
@@ -729,7 +811,7 @@ function inspectVersionSignatures({ versionDir, versionRel, report, rootCaPath, 
     if (!isFile(sigPath)) {
       // 缺签名文件已由 VERSION_REQUIRED_FILES 报错,这里不重复
     } else if (!cmsReady) {
-      report.warn('SIGN_UNVERIFIABLE', rel + '.sig 无法校验,缺少根证书或 ' + EEC_CERT_FILE, rel + '.sig')
+      report.warn('SIGN_UNVERIFIABLE', rel + '.sig 无法校验,缺少根证书或 ' + eecRel, rel + '.sig')
     } else {
       const result = verifyFileCms(filePath, sigPath, rootCaPath, eecPath)
       if (!result.ok) {

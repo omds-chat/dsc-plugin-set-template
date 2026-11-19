@@ -13,7 +13,9 @@
       "author": {
         "type": "string",
         "minLength": 1,
-        "description": "作者英文名,即 plugins/ 下的同名目录。校验脚本只要求非空字符串;作者目录的命名规则由 import-plugins.mjs 约束,作者是否已登记由 plugins/author_manifest.json 决定,未登记只警告。"
+        "maxLength": 39,
+        "pattern": "^[a-zA-Z\\d](?:[a-zA-Z\\d]|-(?=[a-zA-Z\\d])){0,38}$",
+        "description": "作者英文名,即 plugins/ 下的同名目录。必须是合法的 GitHub 用户名,规则与 author-manifest.schema.json 的 username 相同:字母或数字开头,其后为字母、数字或单个连字符,不得以连字符结尾,长度 1 到 39,不区分大小写。校验脚本按同一套规则报 DATALOG_INVALID;作者是否已登记由 plugins/author_manifest.json 决定,未登记只警告。"
       },
       "tag": {
         "type": "array",

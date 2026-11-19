@@ -10,7 +10,7 @@
 | `collection-meta.schema.json` | `meta.json` | 合集根 | 无脚本生成,`template/meta.json` 提供初值,`build-collection.mjs` 只做拷贝 | 校验规则表未单列;`verifyCollection` 第二节,错误码 `META_FIELD_INVALID` |
 | `datalog.schema.json` | `datalog.json` | 合集根 | `scripts/import-plugins.mjs` 的 `planDatalog` | 校验规则 2、6;`verifyCollection` 第五节,错误码 `DATALOG_INVALID`、`DATALOG_DUPLICATE`、`TAG_NOT_DECLARED` |
 | `tags.schema.json` | `tags.json` | 合集根,可选文件 | 无脚本生成,人工维护 | 校验规则 6;`verifyCollection` 第四节,错误码 `TAGS_INVALID`、`TAGS_DUPLICATE` |
-| `author-manifest.schema.json` | `author_manifest.json` | `plugins/` | `scripts/import-plugins.mjs` 的 `planAuthorManifest` | 校验规则表未单列;`verifyCollection` 第六节,错误码 `AUTHOR_MANIFEST_INVALID`、`AUTHOR_MANIFEST_DUPLICATE`、`AUTHOR_NOT_REGISTERED` |
+| `author-manifest.schema.json` | `author_manifest.json` | `plugins/` | `scripts/import-plugins.mjs` 的 `planAuthorManifest` | 校验规则 12;`verifyCollection` 第六节与第七节(作者目录命名),错误码 `AUTHOR_MANIFEST_INVALID`、`AUTHOR_MANIFEST_DUPLICATE`、`AUTHOR_NOT_REGISTERED` |
 | `plugin-manifest.schema.json` | `plugin_manifest.json` | `plugins/<作者>/` | `scripts/import-plugins.mjs` 的 `planPluginManifest` | 校验规则 2;`inspectAuthor`,错误码 `PLUGIN_MANIFEST_INVALID` |
 | `versions.schema.json` | `versions.json` | `plugins/<作者>/<插件>/` | `scripts/import-plugins.mjs` 的 `planVersions` | 校验规则 3;`inspectPlugin`,错误码 `VERSIONS_INVALID`、`LATEST_NOT_LISTED`;`readVersionList` 负责读出版本目录清单 |
 | `runtime/meta.json` | `meta.json` | `plugins/<作者>/<插件>/<版本>/` | `scripts/import-plugins.mjs` 从插件构建产物 `dist/meta.json` 复制 | 字段级约束由插件运行时校验,本仓库脚本只比对 `name` 与 `version` 是否同 `datalog.json`、目录名一致(`inspectVersionMeta`,错误码 `PLUGIN_META_MISMATCH`) |
@@ -33,5 +33,5 @@
 
 - 文件名与所约束的 JSON 同名,后缀 `.schema.json`;`runtime/meta.json` 沿用既有命名,未改。
 - `$id` 固定为该文件在本仓库 Pages 上的地址,即 `https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/<文件名>`,与仓库路径一一对应。
-- 每个 Schema 自包含,不引用外部文件,也不跨文件 `$ref`。插件名正则写在 `datalog.schema.json`、`plugin-manifest.schema.json` 与 `runtime/meta.json`,版本号正则写在 `versions.schema.json` 与 `runtime/meta.json`,改动时逐处同改,并与 `collection-verify.mjs` 的 `PLUGIN_NAME_PATTERN`、`SEMVER_PATTERN` 逐字一致。
+- 每个 Schema 自包含,不引用外部文件,也不跨文件 `$ref`。插件名正则写在 `datalog.schema.json`、`plugin-manifest.schema.json` 与 `runtime/meta.json`,版本号正则写在 `versions.schema.json` 与 `runtime/meta.json`,改动时逐处同改,并与 `collection-verify.mjs` 的 `PLUGIN_NAME_PATTERN`、`SEMVER_PATTERN` 逐字一致。作者名正则写在 `author-manifest.schema.json` 与 `datalog.schema.json`,与 `collection-verify.mjs` 的 `AUTHOR_NAME_PATTERN` 表达同一条规则:JSON Schema 的正则没有 flags,因此写成等价的大小写不敏感形式 `[a-zA-Z\d]`,并配 `maxLength` 39。
 - 合集根 `meta.json` 的 Schema 文件名带 `collection-` 前缀,用来区别 `runtime/meta.json` 约束的插件版本目录 `meta.json`。

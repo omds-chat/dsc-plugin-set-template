@@ -5,7 +5,7 @@
  * 流程:--sign 时先用 EEC 为每个版本的 plugin.js 生成 CMS 分离签名,
  * 再生成三层哈希清单(L1 合集根、L2 作者目录、L3 插件目录)并逐层签名,
  * 然后校验合集,校验不通过则以非零退出码结束并列出全部问题;
- * 校验通过后把根目录元数据、三层清单、eec.pem 与 plugins/ 目录复制到输出目录,
+ * 校验通过后把根目录元数据、三层清单、certs/ 目录与 plugins/ 目录复制到输出目录,
  * 并写入 build-info.json 作为分发索引。根证书不进 dist,由 online-data 分发。
  *
  * revision 语义:该层文件集合与哈希都没变时沿用旧 revision,有变化时加一,
@@ -31,18 +31,23 @@ import {
   verifyCollection,
 } from './lib/collection-verify.mjs'
 import {
+  EEC_CERT_DIR,
   EEC_CERT_FILE,
   VERSION_SIGNED_FILES,
   certMatchesKey,
   describeCertificate,
   requireOpenssl,
+  resolveEecCertPath,
   resolveKeyFile,
   signFileCms,
   signManifest,
 } from './pki.mjs'
 
-/** 分发内容里的合集根文件。三层清单与签名一并分发,签名针对拷贝后的字节依然有效 */
-const ROOT_DIST_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json', 'tags.json', MANIFEST_FILE, MANIFEST_FILE + '.sig']
+/**
+ * 分发内容里的合集根文件。三层清单与签名一并分发,签名针对拷贝后的字节依然有效。
+ * 终端签名证书不在这张表里:certs/ 整个目录由 writeDist 原样复制,证书改名或轮换都不用改这里。
+ */
+const ROOT_DIST_FILES = ['meta.json', 'datalog.json', 'tags.json', MANIFEST_FILE, MANIFEST_FILE + '.sig']
 
 function usage() {
   process.stdout.write([
@@ -53,13 +58,15 @@ function usage() {
     '  --out <目录>                分发内容输出目录,默认 dist',
     '  --root-ca <路径>            根证书路径,用于校验证书链与 CMS 签名',
     '  --sign                      用 EEC_SECRET_KEY 为三层清单与每个版本的 plugin.js 生成 CMS 分离签名',
-    '  --allow-placeholder-eec     骨架模式:根证书缺失或 eec.pem 未由根 CA 签发时只警告',
-    '  --collection-name <名称>    合集名称,默认取合集目录名',
+    '  --allow-placeholder-eec     骨架模式:根证书缺失或终端签名证书未由根 CA 签发时只警告',
+    '  --collection-name <名称>    合集名称,默认取合集目录名;同时决定证书文件名 certs/<合集 id>-eec.crt',
     '  --help                      显示本说明',
     '',
     '环境变量:',
     '  ROOT_CA_PATH                根证书路径,等价于 --root-ca',
     '  EEC_SECRET_KEY              EEC 私钥,可为 PEM 文本或文件路径',
+    '',
+    '终端签名证书按 certs/<合集 id>-eec.crt 读取,旧的根目录 eec.pem 仅作兼容回退。',
     '',
   ].join('\n'))
 }
@@ -168,18 +175,25 @@ function readVersionList(path) {
   }
 }
 
-/** 解析 EEC 私钥并确认与仓库内 eec.pem 配对。不配对时直接失败,避免产出一批无法验签的签名。 */
-function prepareSigner(root, problems) {
+/**
+ * 解析 EEC 私钥并确认与合集内的终端签名证书配对。不配对时直接失败,避免产出一批无法验签的签名。
+ * 证书位置按 certs/<合集 id>-eec.crt 解析,旧的根目录 eec.pem 走兼容回退。
+ */
+function prepareSigner(root, problems, options = {}) {
   const source = process.env.EEC_SECRET_KEY
   if (!source) {
     problems.push(problem('error', 'SIGN_KEY_MISSING', '启用 --sign 时需要环境变量 EEC_SECRET_KEY(P-256 私钥 PEM 或路径)', null))
     return null
   }
-  const eecPath = join(root, EEC_CERT_FILE)
-  if (!existsSync(eecPath)) {
-    problems.push(problem('error', 'EEC_MISSING', '根目录缺少 ' + EEC_CERT_FILE + ',无法签名', EEC_CERT_FILE))
+  const eec = resolveEecCertPath(root, options)
+  if (!eec.exists) {
+    problems.push(
+      problem('error', 'EEC_MISSING', '缺少终端签名证书 ' + eec.candidates[0].rel + ',无法签名', eec.candidates[0].rel),
+    )
     return null
   }
+  // 旧布局提示统一由 verifyCollection 给出,这里不重复报,免得同一条警告出现两次。
+  const eecPath = eec.path
   let keyFile
   try {
     keyFile = resolveKeyFile(source, 'EEC_SECRET_KEY')
@@ -193,8 +207,8 @@ function prepareSigner(root, problems) {
         problem(
           'error',
           'SIGN_KEY_MISMATCH',
-          'EEC_SECRET_KEY 与 ' + EEC_CERT_FILE + ' 不是同一把密钥;请确认 eec.pem 与 CI secret 配对',
-          EEC_CERT_FILE,
+          'EEC_SECRET_KEY 与 ' + eec.rel + ' 不是同一把密钥;请确认证书与 CI secret 配对',
+          eec.rel,
         ),
       )
       keyFile.cleanup()
@@ -376,11 +390,12 @@ function collectIndex(root) {
   return index
 }
 
-function readEecFingerprint(root) {
-  const eecPath = join(root, EEC_CERT_FILE)
-  if (!existsSync(eecPath)) return null
+/** 读取分发内容里终端签名证书的指纹。证书位置与校验阶段用同一套解析,不重复推导。 */
+function readEecFingerprint(root, options = {}) {
+  const eec = resolveEecCertPath(root, options)
+  if (!eec.exists) return null
   try {
-    return describeCertificate(eecPath).fingerprint
+    return describeCertificate(eec.path).fingerprint
   } catch {
     return null
   }
@@ -397,13 +412,21 @@ function writeDist(root, outDir, collectionName) {
     copyFileSync(src, join(outDir, name))
     files += 1
   }
+  // 终端签名证书所在的整个 certs/ 目录原样复制:目录里除 <合集 id>-eec.crt 还可能有轮换中的证书,
+  // 只挑单个文件名会在改名或轮换时漏发,客户端随后便拿不到能验签的证书。
+  files += copyTree(join(root, EEC_CERT_DIR), join(outDir, EEC_CERT_DIR))
+  // 旧布局回退:根目录仍有 eec.pem 时一并分发,旧的验签方才能按老路径取到证书;回退删除后这段一起删。
+  if (existsSync(join(root, EEC_CERT_FILE))) {
+    copyFileSync(join(root, EEC_CERT_FILE), join(outDir, EEC_CERT_FILE))
+    files += 1
+  }
   files += copyTree(join(root, 'plugins'), join(outDir, 'plugins'))
   const index = collectIndex(root)
   const info = {
     collection: collectionName,
     plugin_count: index.length,
     author_count: new Set(index.map((item) => item.author)).size,
-    eec_sha256: readEecFingerprint(root),
+    eec_sha256: readEecFingerprint(root, { collectionName }),
     plugins: index,
   }
   writeFileSync(join(outDir, 'build-info.json'), JSON.stringify(info, null, 2) + '\n', 'utf8')
@@ -436,7 +459,7 @@ function main() {
   const outDir = resolve(options.out)
   const problems = []
 
-  const signer = options.sign ? prepareSigner(root, problems) : null
+  const signer = options.sign ? prepareSigner(root, problems, { collectionName: options.collectionName }) : null
   let manifests = []
   try {
     if (signer) signVersionFiles(root, signer, problems)

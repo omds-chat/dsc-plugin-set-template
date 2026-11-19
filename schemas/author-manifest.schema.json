@@ -10,7 +10,9 @@
       "username": {
         "type": "string",
         "minLength": 1,
-        "description": "作者英文名,即 plugins/ 下的同名目录。校验脚本只要求非空字符串;目录命名规则由 import-plugins.mjs 的 AUTHOR_PATTERN 约束。"
+        "maxLength": 39,
+        "pattern": "^[a-zA-Z\\d](?:[a-zA-Z\\d]|-(?=[a-zA-Z\\d])){0,38}$",
+        "description": "作者英文名,即 plugins/ 下的同名目录。必须是合法的 GitHub 用户名:字母或数字开头,其后为字母、数字或单个连字符,不得以连字符结尾,长度 1 到 39,不区分大小写。pattern 与 collection-verify.mjs 的 AUTHOR_NAME_PATTERN(带 i 标志)、import-plugins.mjs 的 AUTHOR_PATTERN 表达同一套规则;目录名或 username 不符时校验脚本分别报 AUTHOR_DIR_NAME_INVALID、AUTHOR_MANIFEST_INVALID,并指出位置。"
       },
       "profile": {
         "type": "string",

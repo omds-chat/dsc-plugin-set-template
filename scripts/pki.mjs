@@ -17,14 +17,23 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 /** 根证书文件名 */
 export const ROOT_CA_FILE = 'root_ca.crt'
 /** 根 CA 私钥文件名,只在签名环境使用,不入库 */
 export const ROOT_CA_KEY_FILE = 'root_secret.pem'
-/** 合集根目录的终端签名证书文件名 */
+/**
+ * 合集根目录的终端签名证书文件名。这是旧布局,仅为兼容尚未迁移的合集保留;
+ * 现行布局是 certs/<合集 id>-eec.crt,解析见 resolveEecCertPath。
+ */
 export const EEC_CERT_FILE = 'eec.pem'
+/** 终端签名证书目录,相对合集根 */
+export const EEC_CERT_DIR = 'certs'
+/** 终端签名证书文件名后缀,完整文件名为 certs/<合集 id>-eec.crt */
+export const EEC_CERT_SUFFIX = '-eec.crt'
+/** 分发索引文件名,记录合集名。分发目录靠它回读合集 id,不必依赖目录名 */
+export const BUILD_INFO_FILE = 'build-info.json'
 /** EEC 私钥文件名,只从 CI secret 读取 */
 export const EEC_KEY_FILE = 'eec_secret.pem'
 /** EEC 证书签名请求文件名 */
@@ -175,6 +184,83 @@ export function resolveKeyFile(source, label = '私钥') {
   const path = resolve(source)
   if (!existsSync(path)) throw new PkiError(label + ' 文件不存在:' + path)
   return { path, temporary: false, cleanup: () => {} }
+}
+
+/**
+ * 推导合集 id。合集 id 决定终端签名证书的文件名 certs/<合集 id>-eec.crt,推导顺序:
+ *   1. 显式传入的合集名(--collection-name),用于目录名与合集名不一致的场景;
+ *   2. 目录内 build-info.json 的 collection 字段,分发目录 dist/ 靠它回读合集名;
+ *   3. 合集目录名,新建合集时的自然来源。
+ * 不写死任何具体合集名:本函数对任意合集仓库都成立,模板仓库自身也走同一条路径。
+ * @param {string} dir 合集目录
+ * @param {object} [options] collectionName
+ * @returns {{id: string, source: 'explicit'|'build-info'|'directory'}}
+ */
+export function collectionIdOf(dir, options = {}) {
+  const explicit = typeof options.collectionName === 'string' ? options.collectionName.trim() : ''
+  if (explicit) return { id: explicit, source: 'explicit' }
+  const root = resolve(dir)
+  const buildInfoPath = join(root, BUILD_INFO_FILE)
+  if (existsSync(buildInfoPath)) {
+    try {
+      const data = JSON.parse(readFileSync(buildInfoPath, 'utf8'))
+      const recorded = typeof data?.collection === 'string' ? data.collection.trim() : ''
+      if (recorded) return { id: recorded, source: 'build-info' }
+    } catch {
+      // build-info.json 损坏时退回目录名:它由构建流程生成,不是签名输入,不在这里报错
+    }
+  }
+  return { id: basename(root), source: 'directory' }
+}
+
+/** 合集 id 的来源说明,用于报错时点明 id 是怎么来的 */
+export function collectionIdSourceLabel(source) {
+  if (source === 'explicit') return '由 --collection-name 指定'
+  if (source === 'build-info') return '取自 build-info.json 的 collection'
+  return '取自合集目录名'
+}
+
+/** certs 布局下终端签名证书的相对路径,即 certs/<合集 id>-eec.crt */
+export function eecCertRelativePath(collectionId) {
+  return EEC_CERT_DIR + '/' + collectionId + EEC_CERT_SUFFIX
+}
+
+/**
+ * 解析终端签名证书。解析顺序:
+ *   1. <合集目录>/certs/<合集 id>-eec.crt  现行布局,新证书一律放这里;
+ *   2. <合集目录>/eec.pem                  旧布局回退,只为兼容尚未迁移的旧合集保留,
+ *                                          新合集不得使用,该分支在后续版本删除。
+ * 两个位置都没有时不抛错,由调用方按各自语义报错或降级,便于一次性汇总全部问题。
+ * @param {string} dir 合集目录
+ * @param {object} [options] collectionName
+ * @returns {{collectionId: string, collectionIdSource: string, candidates: Array<{rel: string, layout: string, path: string}>, exists: boolean, layout: 'certs'|'legacy'|null, rel: string, path: string|null}}
+ */
+export function resolveEecCertPath(dir, options = {}) {
+  const root = resolve(dir)
+  const { id, source } = collectionIdOf(root, options)
+  const candidates = [
+    { rel: eecCertRelativePath(id), layout: 'certs', path: join(root, EEC_CERT_DIR, id + EEC_CERT_SUFFIX) },
+    { rel: EEC_CERT_FILE, layout: 'legacy', path: join(root, EEC_CERT_FILE) },
+  ]
+  const found = candidates.find((item) => existsSync(item.path)) || null
+  return {
+    collectionId: id,
+    collectionIdSource: source,
+    candidates,
+    exists: found !== null,
+    layout: found ? found.layout : null,
+    rel: found ? found.rel : candidates[0].rel,
+    path: found ? found.path : null,
+  }
+}
+
+/** 命中旧布局时的提示文案:说清该改成的文件名,并声明回退终将删除 */
+export function legacyEecNotice(resolved) {
+  return (
+    '检测到旧布局的 ' + EEC_CERT_FILE + '(' + resolved.rel + '),已按兼容回退读取;' +
+    '请把证书改名为 ' + eecCertRelativePath(resolved.collectionId) + ';' +
+    '该回退只用于兼容旧合集,将在后续版本删除'
+  )
 }
 
 /**

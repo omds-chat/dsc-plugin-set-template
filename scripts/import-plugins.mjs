@@ -31,7 +31,10 @@ const BUILD_TIMEOUT_MS = Number(process.env.IMPORT_BUILD_TIMEOUT_MS || 900000)
 const IS_WINDOWS = process.platform === 'win32'
 const COPY_SKIP = new Set(['node_modules', '.git', 'dist', 'temp'])
 
-const AUTHOR_PATTERN = /^[a-z0-9][a-z0-9-]*$/
+// 作者名与合集校验同一套规则,即合法的 GitHub 用户名:字母或数字开头,其后为字母、数字或
+// 单个连字符,不得以连字符结尾,长度上限 39,不区分大小写。与 collection-verify.mjs 的
+// AUTHOR_NAME_PATTERN、schemas/author-manifest.schema.json 的 username.pattern 一致。
+const AUTHOR_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
 const PLUGIN_PATTERN = /^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*\/dsc-[a-z0-9][a-z0-9._-]*)$/
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const URL_PATTERN = /^https?:\/\/\S+$/i
