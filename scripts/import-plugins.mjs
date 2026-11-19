@@ -7,9 +7,10 @@
  * 单项失败只跳过该项并记录原因,不影响其他项,退出码保持 0。
  *
  * 与旧版 JSON 签名实现的差别:不再处理 plugin_sign.json 与 plugin_secret.pub,
- * 改为复制作者侧分离签名(plugin.js.sig 与 meta.json.sig 分别落为
- * plugin.js.author.sig 与 meta.json.author.sig),以及作者公钥 dist/author_pub.pem
- * 到 plugins/<author>/author_pub.pem。合集 CMS 签名由 build-collection.mjs --sign 生成。
+ * 改为复制作者侧分离签名 plugin.js.sig 为 plugin.js.author.sig,以及作者公钥
+ * dist/author_pub.pem 到 plugins/<author>/author_pub.pem。
+ * meta.json 不再接受作者签名:它已由 L3 清单覆盖并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。
+ * 合集 CMS 签名由 build-collection.mjs --sign 生成。
  *
  * 用法:
  *   node scripts/import-plugins.mjs
@@ -36,10 +37,12 @@ const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const URL_PATTERN = /^https?:\/\/\S+$/i
 const GIT_PATTERN = /^(?:https:\/\/|git@|git:\/\/|ssh:\/\/)/i
 
-/** dist 内可选的作者分离签名,键为源文件名,值为落盘到版本目录的文件名 */
+/**
+ * dist 内可选的作者分离签名,键为源文件名,值为落盘到版本目录的文件名。
+ * 只认 plugin.js:meta.json 由 L3 清单覆盖并由合集 EEC 绑定,作者签名不再带来额外信任。
+ */
 const AUTHOR_SIGNATURE_MAP = [
   { source: 'plugin.js.sig', target: 'plugin.js.author.sig' },
-  { source: 'meta.json.sig', target: 'meta.json.author.sig' },
 ]
 /** dist 内的作者公钥文件名 */
 const AUTHOR_PUB_SOURCE = 'author_pub.pem'

@@ -21,6 +21,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, join, resolve } from 'node:path'
 import {
   LAYER1_FILES,
+  LAYER1_OPTIONAL_FILES,
   LAYER2_FILES,
   LAYER3_FILES,
   MANIFEST_FILE,
@@ -304,7 +305,7 @@ function writeLayerManifest({ layer, layerRel, layerDir, entries, signer, proble
 
 /** 生成三层清单:L1 合集根、L2 每个作者目录、L3 每个插件目录,互不引用。 */
 function buildManifests(root, signer, problems) {
-  const layers = [{ layer: 'L1', layerRel: '', layerDir: root, files: LAYER1_FILES }]
+  const layers = [{ layer: 'L1', layerRel: '', layerDir: root, files: [...LAYER1_FILES, ...LAYER1_OPTIONAL_FILES] }]
   const pluginsDir = join(root, 'plugins')
   for (const author of listDirectoryNames(pluginsDir)) {
     const authorDir = join(pluginsDir, author)

@@ -31,8 +31,8 @@ import {
   verifyFileCms,
 } from '../pki.mjs'
 
-/** 合集根目录必需的文件 */
-export const ROOT_REQUIRED_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json', 'tags.json']
+/** 合集根目录必需的文件。tags.json 可选,存在时才要求被 L1 清单覆盖 */
+export const ROOT_REQUIRED_FILES = [EEC_CERT_FILE, 'meta.json', 'datalog.json']
 /** 版本目录内必需的文件。meta.json.sig 已取消,产物本体只由 plugin.js.sig 签名 */
 export const VERSION_REQUIRED_FILES = ['meta.json', 'plugin.js', 'plugin.js.sig']
 /** 作者目录内的公钥文件名 */
@@ -43,8 +43,10 @@ export const ROOT_CA_RELATIVE = ROOT_CA_FILE
 export const MANIFEST_SIGNATURE_SUFFIX = '.sig'
 /** 清单结构版本,与 schemas/manifest.schema.json 保持一致 */
 export const MANIFEST_SCHEMA_VERSION = 1
-/** L1 覆盖的文件,相对合集根 */
-export const LAYER1_FILES = ['datalog.json', 'meta.json', 'plugins/author_manifest.json', 'tags.json']
+/** L1 必需覆盖的文件,相对合集根 */
+export const LAYER1_FILES = ['datalog.json', 'meta.json', 'plugins/author_manifest.json']
+/** L1 可选覆盖的文件:存在就必须被清单覆盖,不存在则不报错、也不进清单 */
+export const LAYER1_OPTIONAL_FILES = ['tags.json']
 /** L2 覆盖的文件,相对作者目录。author_pub.pem 缺失时按既有规则降级为警告,清单只覆盖实际存在的文件 */
 export const LAYER2_FILES = ['author_pub.pem', 'plugin_manifest.json']
 /** L3 固定覆盖的文件,相对插件目录;其余覆盖项是每个版本的 meta.json */
@@ -296,7 +298,7 @@ function verifyManifests({ root, report, stats, rootCaPath, eecPath, cmsReady, a
     layer: 'L1',
     layerRel: '',
     layerDir: root,
-    expectedFiles: LAYER1_FILES,
+    expectedFiles: [...LAYER1_FILES, ...LAYER1_OPTIONAL_FILES.filter((name) => isFile(join(root, name)))],
     report,
     rootCaPath,
     eecPath,

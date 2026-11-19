@@ -42,10 +42,11 @@
 | `meta.json` | 是 | 插件运行时元数据,遵循 `schemas/runtime/meta.json`;由 L3 清单覆盖,不再单独签名 |
 | `plugin.js` | 是 | 插件运行时脚本,单文件 ESM,使用 LF 换行 |
 | `plugin.js.sig` | 是 | 合集 CMS 分离签名,由 EEC 生成 |
-| `meta.json.author.sig` | 否 | 作者裸公钥分离签名,存在时用 `plugins/<author>/author_pub.pem` 校验 |
-| `plugin.js.author.sig` | 否 | 作者裸公钥分离签名,同上 |
+| `plugin.js.author.sig` | 否 | 作者裸公钥分离签名,存在时用 `plugins/<author>/author_pub.pem` 校验 |
 
-合集签名由 `scripts/build-collection.mjs --sign` 在 CI 中用 `EEC_SECRET_KEY` 生成,仓库内不存放任何私钥。作者签名由作者自己的构建流程生成,`scripts/import-plugins.mjs` 会把插件产物里的 `plugin.js.sig` 与 `meta.json.sig` 落成 `plugin.js.author.sig` 与 `meta.json.author.sig`,并把 `author_pub.pem` 落到作者目录。
+`meta.json` 不接受作者签名:它由 L3 清单覆盖,并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。`dsc-plugin-template` 仓库仍在产出 `meta.json.author.sig`,待同步。
+
+合集签名由 `scripts/build-collection.mjs --sign` 在 CI 中用 `EEC_SECRET_KEY` 生成,仓库内不存放任何私钥。作者签名由作者自己的构建流程生成,`scripts/import-plugins.mjs` 会把插件产物里的 `plugin.js.sig` 落成 `plugin.js.author.sig`,并把 `author_pub.pem` 落到作者目录。
 
 ## 目录示例
 

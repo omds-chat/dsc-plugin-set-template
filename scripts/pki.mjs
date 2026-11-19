@@ -35,8 +35,11 @@ export const AUTHOR_KEY_FILE = 'author_secret.pem'
 export const AUTHOR_PUB_FILE = 'author_pub.pem'
 /** 版本目录内必须由 EEC 签名的文件。meta.json 改由 L3 清单覆盖,不再单独签名 */
 export const VERSION_SIGNED_FILES = ['plugin.js']
-/** 版本目录内允许携带作者分离签名的文件,存在 <文件>.author.sig 时用作者公钥校验 */
-export const VERSION_AUTHOR_SIGNED_FILES = ['meta.json', 'plugin.js']
+/**
+ * 版本目录内允许携带作者分离签名的文件,存在 <文件>.author.sig 时用作者公钥校验。
+ * meta.json 已由 L3 清单覆盖、并由合集 EEC 绑定,作者签名不再带来额外信任,因此只认 plugin.js。
+ */
+export const VERSION_AUTHOR_SIGNED_FILES = ['plugin.js']
 /** 三层清单的文件名,每层目录一份 manifest.json 与一份 manifest.json.sig */
 export const MANIFEST_FILE = 'manifest.json'
 /** 需要的最低 OpenSSL 主版本号 */

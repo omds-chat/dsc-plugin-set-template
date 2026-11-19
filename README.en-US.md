@@ -158,7 +158,7 @@ Distribution uses three hash-manifest layers, each with one `manifest.json` and 
 
 | Layer | Location | Covered files (relative to the layer directory) |
 |:---:|:---:|:---:|
-| L1 | collection root | `meta.json`, `datalog.json`, `tags.json`, `plugins/author_manifest.json` |
+| L1 | collection root | `meta.json`, `datalog.json`, `plugins/author_manifest.json` required, `tags.json` optional |
 | L2 | `plugins/<author>/` | `author_pub.pem`, `plugin_manifest.json` |
 | L3 | `plugins/<author>/<plugin>/` | `versions.json`, `<version>/meta.json` |
 
@@ -178,7 +178,8 @@ Manifest format, with the JSON Schema in `schemas/manifest.schema.json`:
 - The hash is SHA-512, lowercase hex.
 - `revision` is a positive integer per layer: it increments when the layer's file set or contents change, keeps its value when nothing changed, and starts at 1 without a previous manifest.
 - L3 does not cover `plugin.js` or `plugin.js.sig`: the artifact itself is signed per version by `plugin.js.sig`, and the manifest describes metadata only.
-- `meta.json.sig` is gone: the only collection signature inside a version directory is `plugin.js.sig`, and `plugin.js.author.sig` stays optional.
+- `tags.json` is optional: when it exists it must be covered by the L1 manifest, and when it does not exist it is neither required nor listed.
+- `meta.json.sig` is gone: the only collection signature inside a version directory is `plugin.js.sig`, and `plugin.js.author.sig` stays optional. `meta.json.author.sig` is dropped as well: `meta.json` is covered by the L3 manifest and bound by the collection EEC, while the author public key itself is covered by L2. The `dsc-plugin-template` repository still emits that file and has to be synced.
 
 The three layers are deliberately not folded together: L1 does not reference L2 and L2 does not reference L3, so each layer can be published, verified and re-signed on its own. The trade-off gives up "one check yields a digest of the whole tree" in exchange for per-plugin incremental updates: changing one plugin only increments the L3 `revision`, leaves L2 and L1 untouched, and clients refetch just that layer. Folding the layers into a single root manifest would make every plugin release rewrite the root manifest and force every client to refetch the whole digest.
 
@@ -206,7 +207,7 @@ The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocert
 | 2 | Every plugin in `datalog.json` appears in `plugins/<author>/plugin_manifest.json` and its plugin directory exists |
 | 3 | Every plugin directory has `versions.json` and `latest` is present in `versions` |
 | 4 | Every version directory has `meta.json`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -md sha512 -inform DER -CAfile <root> -certfile eec.pem`; a failure is an error |
-| 5 | When `<file>.author.sig` exists, `plugins/<author>/author_pub.pem` must exist and the signature must verify with `openssl pkeyutl -verify`; a failure is an error |
+| 5 | When `plugin.js.author.sig` exists in a version directory, `plugins/<author>/author_pub.pem` must exist and the signature must verify with `openssl pkeyutl -verify`; a failure is an error. Other `*.author.sig` files are not checked |
 | 6 | When `tags.json` exists, every `tag` in `datalog.json` comes from it |
 | 7 | All three manifests exist and are structurally valid: `schemaVersion` is 1, `revision` is a positive integer, `files` is a non-empty array, and each entry holds only `path` and `sha512` |
 | 8 | Every `path` is valid: forward slashes, relative, no `..`, not the manifest itself, no duplicates |
@@ -242,6 +243,7 @@ Verification has two levels. The scripts here are a strict pre-release gate and 
 ## Verification and deployment
 
 - Locally: run `pnpm install`, then `pnpm verify`. `pnpm build` first materialises and signs the three manifests, then verifies, then writes distribution content to `dist/`; with `--sign` it signs `plugin.js` and the three manifests with `EEC_SECRET_KEY`.
+- The three `manifest.json` and `manifest.json.sig` files must be committed together with the collection source. A revision is read back from the previous manifest of the same layer, so leaving them out of version control resets every layer to 1 on a fresh checkout and breaks revision continuity across CI runs.
 - Automation: a push to main or a manual `build-and-deploy` run installs dependencies, imports plugins from the manifest, resolves the root certificate, checks the `eec.pem` chain with `openssl verify`, signs with `EEC_SECRET_KEY` and builds `dist/`, runs a full verification on `dist/` and finally publishes to Pages.
 - The root certificate comes from one of two places: `secrets.ROOT_CA_PEM` (PEM text) wins, otherwise `vars.ROOT_CA_URL` is fetched from the online-data branch.
 - Signing keys come from secrets only. No private key is ever stored in the repository.

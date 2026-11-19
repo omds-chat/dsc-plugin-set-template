@@ -158,7 +158,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 | 层 | 位置 | 覆盖的文件(相对该层目录) |
 |:---:|:---:|:---:|
-| L1 | 合集根 | `meta.json`、`datalog.json`、`tags.json`、`plugins/author_manifest.json` |
+| L1 | 合集根 | `meta.json`、`datalog.json`、`plugins/author_manifest.json` 必需,`tags.json` 可选 |
 | L2 | `plugins/<作者>/` | `author_pub.pem`、`plugin_manifest.json` |
 | L3 | `plugins/<作者>/<插件>/` | `versions.json`、`<版本>/meta.json` |
 
@@ -178,7 +178,8 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 - 哈希算法 SHA-512,十六进制小写。
 - `revision` 是每层独立的正整数:该层文件集合或内容变化时加一,不变时沿用旧值,没有旧清单时从 1 开始。
 - L3 不覆盖 `plugin.js` 与 `plugin.js.sig`:产物本体由每个版本的 `plugin.js.sig` 独立签名,清单只描述元数据。
-- `meta.json.sig` 已取消,版本目录的合集签名只剩 `plugin.js.sig`;`plugin.js.author.sig` 可选保留。
+- `tags.json` 可选:存在就必须被 L1 清单覆盖,不存在则不报错、也不进清单。
+- `meta.json.sig` 已取消,版本目录的合集签名只剩 `plugin.js.sig`;`plugin.js.author.sig` 可选保留。`meta.json.author.sig` 同样取消:meta.json 由 L3 清单覆盖并由合集 EEC 绑定,作者公钥本身由 L2 覆盖。`dsc-plugin-template` 仓库仍在产出该文件,待同步。
 
 三层之间不做收束:L1 不引用 L2,L2 不引用 L3,任何一层都可以单独发布、单独校验、单独重签。取舍是放弃「一次校验拿到全树摘要」,换取按插件增量更新:改一个插件只需 L3 的 `revision` 加一,L2 与 L1 的 `revision` 不变,客户端也只重新拉取这一层的清单与签名。若把三层收束成一份根清单,任何插件发版都会改动根清单,所有客户端都得重拉整份摘要。
 
@@ -206,7 +207,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | 2 | `datalog.json` 中的每个插件都在 `plugins/<author>/plugin_manifest.json` 中出现,且插件目录存在 |
 | 3 | 每个插件目录有 `versions.json`,`latest` 必须在 `versions` 列表内 |
 | 4 | 每个版本目录有 `meta.json`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -md sha512 -inform DER -CAfile <根证书> -certfile eec.pem` 验签,失败即报错 |
-| 5 | 若存在 `<文件>.author.sig`,则 `plugins/<author>/author_pub.pem` 必须存在,并用 `openssl pkeyutl -verify` 验证,失败即报错 |
+| 5 | 若版本目录存在 `plugin.js.author.sig`,则 `plugins/<author>/author_pub.pem` 必须存在,并用 `openssl pkeyutl -verify` 验证,失败即报错;其它 `*.author.sig` 不参与校验 |
 | 6 | `tags.json` 存在时,`datalog.json` 的 `tag` 必须取自其中 |
 | 7 | 三层清单存在且结构合法:`schemaVersion` 为 1,`revision` 为正整数,`files` 为非空数组,条目只含 `path` 与 `sha512` |
 | 8 | 清单条目的 `path` 合法:正斜杠、相对路径、不含 `..`、不指向清单自身、不重复 |
@@ -242,6 +243,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 ## 校验与部署流程
 
 - 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 先补齐三层清单并签名,再校验,最后把分发内容写入 `dist/`;带 `--sign` 时用 `EEC_SECRET_KEY` 为 `plugin.js` 与三层清单签名。
+- 三层 `manifest.json` 与 `manifest.json.sig` 必须随合集源码提交入库。revision 从该层上一份清单读出,不提交就会在每次全新 checkout 时退回 1,跨 CI 的 revision 沿用随之失效。
 - 自动化:推送到 main 或手动触发 `build-and-deploy`,依次安装依赖、按清单收录插件、解析根证书、用 `openssl verify` 校验 `eec.pem` 的证书链、用 `EEC_SECRET_KEY` 签名并构建 `dist/`、对 `dist/` 再跑一次完整校验,最后发布到 Pages。
 - 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 online-data 分支拉取。
 - 签名私钥只从 secrets 读取,仓库内不存放任何私钥。
