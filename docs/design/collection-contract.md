@@ -2,19 +2,19 @@
 
 本文件说明 dsc 插件合集骨架的契约:骨架里放什么、合集 id 从哪里来、终端签名证书按什么顺序解析、构建与校验各自负责什么,以及本仓库与使用方仓库之间的分工。
 
-操作步骤不在本文复述。怎么复制骨架、怎么准备签名材料、怎么在临时仓库里试跑,见 [README](../../README.md);合集目录里的文件清单见 [template/plugins/README.md](../../template/plugins/README.md);JSON 字段与脚本校验的对应关系见 [schemas/README.md](../../schemas/README.md)。本文只讲这些做法为什么这样定,以及边界落在哪里。全部文档的入口见 [docs/index.md](../index.md):它说明每份文档负责什么、冲突时以谁为准。
+操作步骤不在本文复述。怎么复制骨架、怎么准备签名材料、怎么在临时仓库里试跑,见 [README](../../README.md);合集目录里的文件清单见 [template/plugins/README.md](../../template/plugins/README.md);JSON 字段与脚本校验的对应关系见 [schemas/README.md](../../schemas/README.md)。本文只讲这些做法为什么这样定,以及边界落在哪里。全部文档的入口见 [docs/README.md](../index.md):它说明每份文档负责什么、冲突时以谁为准。
 
 ## 1. 各份文档回答什么
 
 | 文档 | 回答的问题 | 不回答的问题 |
 |:---:|:---:|:---:|
-| [docs/index.md](../index.md) | 哪份文档管什么、冲突时以谁为准 | 任何具体做法、取舍与字段 |
+| [docs/README.md](../index.md) | 哪份文档管什么、冲突时以谁为准 | 任何具体做法、取舍与字段 |
 | [README](../../README.md) | 怎么把一个合集做出来:步骤、命令、开关 | 为什么这样定、什么不该做 |
 | [template/plugins/README.md](../../template/plugins/README.md) | 合集收录什么:目录层级与必需文件 | 骨架之外的工程从哪来 |
 | [schemas/README.md](../../schemas/README.md) | 每份 JSON 的形状,以及它对应哪条脚本校验 | 判定失败时该改哪一侧 |
 | 本文 | 取舍与边界:为什么这样定、哪里不能越界 | 具体命令与字段清单 |
 
-三者的优先级是固定的:脚本是权威实现,Schema 是书面契约,文档是解释。三者冲突时按这个顺序修文档与 Schema,不改脚本去迁就文档。这条顺序与 [docs/index.md](../index.md) 的"冲突时以谁为准"是同一条规则;两处表述不一致时以本文为准。
+三者的优先级是固定的:脚本是权威实现,Schema 是书面契约,文档是解释。三者冲突时按这个顺序修文档与 Schema,不改脚本去迁就文档。这条顺序与 [docs/README.md](../index.md) 的"冲突时以谁为准"是同一条规则;两处表述不一致时以本文为准。
 
 ## 2. 合集骨架的职责
 
