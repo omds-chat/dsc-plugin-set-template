@@ -13,6 +13,9 @@
  * - 合集签名 openssl cms -sign -binary -outform DER -nocerts -noattr,产出逐字节语义的 DER 格式 CMS 分离签名
  *   DER 是跨仓库统一格式:默认的 S/MIME multipart/signed 包装浏览器无法解析,插件市场要在浏览器里验签
  * - 作者签名 openssl pkeyutl -sign -rawin(Ed25519),产出裸公钥分离签名
+ *
+ * 合集骨架用 certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_ 占住终端签名证书的位置。
+ * 它不是证书:解析结果用 isPlaceholder 标出,签名入口拒绝它,验签入口与校验脚本提示替换。
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -25,13 +28,21 @@ export const ROOT_CA_FILE = 'root_ca.crt'
 export const ROOT_CA_KEY_FILE = 'root_secret.pem'
 /**
  * 合集根目录的终端签名证书文件名。这是旧布局,仅为兼容尚未迁移的合集保留;
- * 现行布局是 certs/<合集 id>-eec.crt,解析见 resolveEecCertPath。
+ * 现行布局是 certs/<合集 id>/<合集 id>-eec.crt,解析见 resolveEecCertPath。
  */
 export const EEC_CERT_FILE = 'eec.pem'
-/** 终端签名证书目录,相对合集根 */
+/**
+ * 证书目录,相对合集根。目录下按来源分文件夹:合集自身的终端签名证书在
+ * certs/<合集 id>/ 里,文件夹名与文件名都取签名材料本身的命名。
+ */
 export const EEC_CERT_DIR = 'certs'
-/** 终端签名证书文件名后缀,完整文件名为 certs/<合集 id>-eec.crt */
+/** 终端签名证书文件名后缀,完整文件名为 certs/<合集 id>/<合集 id>-eec.crt */
 export const EEC_CERT_SUFFIX = '-eec.crt'
+/**
+ * 占位文件名。合集骨架在 certs/<合集 id>/ 里放这个纯文本文件,占住终端签名证书的位置。
+ * 它不是证书,签名与验签都必须拒绝它;解析结果用 isPlaceholder 标出,调用方据此给出替换提示。
+ */
+export const EEC_PLACEHOLDER_FILE = '_REPLACE_THIS_FILE_AS_YOUR_EEC_'
 /** 分发索引文件名,记录合集名。分发目录靠它回读合集 id,不必依赖目录名 */
 export const BUILD_INFO_FILE = 'build-info.json'
 /** EEC 私钥文件名,只从 CI secret 读取 */
@@ -187,7 +198,7 @@ export function resolveKeyFile(source, label = '私钥') {
 }
 
 /**
- * 推导合集 id。合集 id 决定终端签名证书的文件名 certs/<合集 id>-eec.crt,推导顺序:
+ * 推导合集 id。合集 id 决定终端签名证书的所在文件夹与文件名 certs/<合集 id>/<合集 id>-eec.crt,推导顺序:
  *   1. 显式传入的合集名(--collection-name),用于目录名与合集名不一致的场景;
  *   2. 目录内 build-info.json 的 collection 字段,分发目录 dist/ 靠它回读合集名;
  *   3. 合集目录名,新建合集时的自然来源。
@@ -220,46 +231,79 @@ export function collectionIdSourceLabel(source) {
   return '取自合集目录名'
 }
 
-/** certs 布局下终端签名证书的相对路径,即 certs/<合集 id>-eec.crt */
+/** 现行布局下终端签名证书的相对路径,即 certs/<合集 id>/<合集 id>-eec.crt */
 export function eecCertRelativePath(collectionId) {
-  return EEC_CERT_DIR + '/' + collectionId + EEC_CERT_SUFFIX
+  return EEC_CERT_DIR + '/' + collectionId + '/' + collectionId + EEC_CERT_SUFFIX
+}
+
+/** 占位文件的相对路径,即 certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_ */
+export function eecPlaceholderRelativePath(collectionId) {
+  return EEC_CERT_DIR + '/' + collectionId + '/' + EEC_PLACEHOLDER_FILE
 }
 
 /**
- * 解析终端签名证书。解析顺序:
- *   1. <合集目录>/certs/<合集 id>-eec.crt  现行布局,新证书一律放这里;
- *   2. <合集目录>/eec.pem                  旧布局回退,只为兼容尚未迁移的旧合集保留,
- *                                          新合集不得使用,该分支在后续版本删除。
- * 两个位置都没有时不抛错,由调用方按各自语义报错或降级,便于一次性汇总全部问题。
+ * 解析终端签名证书。解析顺序固定为三项,先真实证书,再骨架占位文件,最后旧布局:
+ *   1. <合集目录>/certs/<合集 id>/<合集 id>-eec.crt      现行布局,真实证书一律放这里;
+ *   2. <合集目录>/certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_
+ *                                                        骨架占位文件,说明该位置尚未替换成证书,
+ *                                                        命中时 layout 为 placeholder、isPlaceholder 为 true;
+ *   3. <合集目录>/eec.pem                                 旧布局回退,只为兼容尚未迁移的旧合集保留,
+ *                                                        新合集不得使用,该分支在后续版本删除。
+ * 三个位置都没有时不抛错,由调用方按各自语义报错或降级,便于一次性汇总全部问题。
  * @param {string} dir 合集目录
  * @param {object} [options] collectionName
- * @returns {{collectionId: string, collectionIdSource: string, candidates: Array<{rel: string, layout: string, path: string}>, exists: boolean, layout: 'certs'|'legacy'|null, rel: string, path: string|null}}
+ * @returns {{collectionId: string, collectionIdSource: string, candidates: Array<{rel: string, layout: 'certs'|'placeholder'|'legacy', placeholder: boolean, present: boolean, path: string}>, exists: boolean, isPlaceholder: boolean, layout: 'certs'|'placeholder'|'legacy'|null, rel: string, path: string|null}}
  */
 export function resolveEecCertPath(dir, options = {}) {
   const root = resolve(dir)
   const { id, source } = collectionIdOf(root, options)
   const candidates = [
-    { rel: eecCertRelativePath(id), layout: 'certs', path: join(root, EEC_CERT_DIR, id + EEC_CERT_SUFFIX) },
-    { rel: EEC_CERT_FILE, layout: 'legacy', path: join(root, EEC_CERT_FILE) },
+    { rel: eecCertRelativePath(id), layout: 'certs', placeholder: false, path: join(root, EEC_CERT_DIR, id, id + EEC_CERT_SUFFIX) },
+    { rel: eecPlaceholderRelativePath(id), layout: 'placeholder', placeholder: true, path: join(root, EEC_CERT_DIR, id, EEC_PLACEHOLDER_FILE) },
+    { rel: EEC_CERT_FILE, layout: 'legacy', placeholder: false, path: join(root, EEC_CERT_FILE) },
   ]
-  const found = candidates.find((item) => existsSync(item.path)) || null
+  for (const item of candidates) item.present = existsSync(item.path)
+  const found = candidates.find((item) => item.present) || null
   return {
     collectionId: id,
     collectionIdSource: source,
     candidates,
     exists: found !== null,
+    isPlaceholder: found ? found.placeholder === true : false,
     layout: found ? found.layout : null,
     rel: found ? found.rel : candidates[0].rel,
     path: found ? found.path : null,
   }
 }
 
+/** 判断路径是否就是占位文件。签名与验签入口用它拒绝把占位文件当证书使用。 */
+export function isEecPlaceholderFile(path) {
+  return typeof path === 'string' && basename(path) === EEC_PLACEHOLDER_FILE
+}
+
 /** 命中旧布局时的提示文案:说清该改成的文件名,并声明回退终将删除 */
 export function legacyEecNotice(resolved) {
   return (
     '检测到旧布局的 ' + EEC_CERT_FILE + '(' + resolved.rel + '),已按兼容回退读取;' +
-    '请把证书改名为 ' + eecCertRelativePath(resolved.collectionId) + ';' +
+    '请把证书放到 ' + eecCertRelativePath(resolved.collectionId) + ';' +
     '该回退只用于兼容旧合集,将在后续版本删除'
+  )
+}
+
+/** 命中占位文件时的提示文案:说清它不是证书,并给出替换后的真实路径与删除占位文件的要求 */
+export function placeholderEecNotice(resolved) {
+  return (
+    '终端签名证书仍是占位文件 ' + resolved.rel + ',它不是证书,不能用于签名或验签;' +
+    '请从组织离线密钥库取出该合集的终端签名证书,放到 ' + eecCertRelativePath(resolved.collectionId) + ',并删除占位文件'
+  )
+}
+
+/** 真实证书就位而占位文件仍在时的提示文案:占位文件会随 certs/ 一起分发,提醒删除 */
+export function leftoverPlaceholderNotice(resolved) {
+  const placeholder = resolved.candidates.find((item) => item.layout === 'placeholder')
+  return (
+    '占位文件 ' + (placeholder ? placeholder.rel : eecPlaceholderRelativePath(resolved.collectionId)) +
+    ' 仍然存在,已忽略;它已不再需要,且会随 certs/ 进入分发目录,请删除'
   )
 }
 
@@ -273,8 +317,8 @@ export function legacyEecNotice(resolved) {
  */
 export function genRootCa(dir, options = {}) {
   requireOpenssl()
-  const org = requireText(options.org || 'omdsc-dev', '组织名称')
-  const name = requireText(options.name || 'omdsc-dev Root CA', '根 CA 名称')
+  const org = requireText(options.org || 'omds-chat', '组织名称')
+  const name = requireText(options.name || 'omds-chat Root CA', '根 CA 名称')
   const days = String(options.days || 3650)
   const keyPath = resolve(dir, options.keyFile || ROOT_CA_KEY_FILE)
   const certPath = resolve(dir, options.certFile || ROOT_CA_FILE)
@@ -315,10 +359,10 @@ export function genEecKey(dir, options = {}) {
  * @param {object} [options] keyFile、csrFile
  * @returns {{csrPath: string, keyPath: string}}
  */
-export function genCsr(dir, commonName, org = 'omdsc-dev', options = {}) {
+export function genCsr(dir, commonName, org = 'omds-chat', options = {}) {
   requireOpenssl()
   const cn = requireText(commonName, 'commonName')
-  const o = requireText(org || 'omdsc-dev', '组织名称')
+  const o = requireText(org || 'omds-chat', '组织名称')
   const keyPath = resolve(dir, options.keyFile || EEC_KEY_FILE)
   requireFile(keyPath, 'EEC 私钥')
   const csrPath = resolve(dir, options.csrFile || EEC_CSR_FILE)
@@ -376,6 +420,12 @@ export function signFileCms(filePath, eecCertPath, eecKeyPath, options = {}) {
   requireOpenssl()
   requireFile(filePath, '待签名文件')
   requireFile(eecCertPath, 'EEC 证书')
+  if (isEecPlaceholderFile(eecCertPath)) {
+    throw new PkiError(
+      '终端签名证书是占位文件 ' + eecCertPath + ',拒绝签名;' +
+      '请先从组织离线密钥库取出该合集的终端签名证书,替换为 certs/<合集 id>/<合集 id>-eec.crt 形式的真实证书',
+    )
+  }
   requireFile(eecKeyPath, 'EEC 私钥')
   const sigPath = options.out || cmsSignaturePath(filePath)
   ensureDirFor(sigPath)
@@ -394,6 +444,9 @@ export function signFileCms(filePath, eecCertPath, eecKeyPath, options = {}) {
  * @returns {{ok: boolean, reason: string|null}}
  */
 export function verifyFileCms(filePath, sigPath, rootCertPath, eecCertPath) {
+  if (isEecPlaceholderFile(eecCertPath)) {
+    return { ok: false, reason: '终端签名证书是占位文件,不能用于验签:' + eecCertPath }
+  }
   if (!existsSync(filePath)) return { ok: false, reason: '被签名文件不存在:' + filePath }
   if (!existsSync(sigPath)) return { ok: false, reason: '签名文件不存在:' + sigPath }
   if (!existsSync(rootCertPath)) return { ok: false, reason: '根证书不存在:' + rootCertPath }

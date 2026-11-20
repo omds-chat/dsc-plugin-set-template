@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/omdsc-dev/awesome-dsc-plugin-set-template.git"
+    "url": "git+https://github.com/omds-chat/awesome-dsc-plugin-set-template.git"
   },
   "engines": {
     "node": ">=20"

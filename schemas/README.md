@@ -32,6 +32,6 @@
 ## 命名与引用约定
 
 - 文件名与所约束的 JSON 同名,后缀 `.schema.json`;`runtime/meta.json` 沿用既有命名,未改。
-- `$id` 固定为该文件在本仓库 Pages 上的地址,即 `https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/<文件名>`,与仓库路径一一对应。
+- `$id` 固定为该文件在本仓库 Pages 上的地址,即 `https://omds-chat.github.io/awesome-dsc-plugin-set-template/schemas/<文件名>`,与仓库路径一一对应。
 - 每个 Schema 自包含,不引用外部文件,也不跨文件 `$ref`。插件名正则写在 `plugins.schema.json`、`plugin-manifest.schema.json` 与 `runtime/meta.json`,版本号正则写在 `versions.schema.json` 与 `runtime/meta.json`,改动时逐处同改,并与 `collection-verify.mjs` 的 `PLUGIN_NAME_PATTERN`、`SEMVER_PATTERN` 逐字一致。作者名正则写在 `author-manifest.schema.json` 与 `plugins.schema.json`,与 `collection-verify.mjs` 的 `AUTHOR_NAME_PATTERN` 表达同一条规则:JSON Schema 的正则没有 flags,因此写成等价的大小写不敏感形式 `[a-zA-Z\d]`,并配 `maxLength` 39。
 - 合集根 `meta.json` 的 Schema 文件名带 `collection-` 前缀,用来区别 `runtime/meta.json` 约束的插件版本目录 `meta.json`。

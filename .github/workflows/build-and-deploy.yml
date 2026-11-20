@@ -65,11 +65,12 @@ jobs:
 
       # 强校验:终端签名证书必须由该根证书签发,且未过期、keyUsage 含 digitalSignature、
       # basicConstraints 为 CA:FALSE。证书路径不写死:与校验脚本共用 pki.mjs 的解析,
-      # 先找 certs/<合集 id>-eec.crt,旧的根目录 eec.pem 仅作兼容回退,回退删除后本步骤无需改动。
+      # 先找 certs/<合集 id>/<合集 id>-eec.crt,占位文件不是证书直接失败,旧的根目录 eec.pem 仅作兼容回退,
+      # 回退删除后本步骤无需改动。
       - name: Verify EEC against root CA
         run: |
           set -euo pipefail
-          eec="$(node -e "import('./scripts/pki.mjs').then((m) => { const r = m.resolveEecCertPath(process.cwd()); if (!r.exists) { console.error('找不到终端签名证书:' + r.candidates.map((c) => c.rel).join(' 或 ')); process.exit(1); } process.stdout.write(r.path); })")"
+          eec="$(node -e "import('./scripts/pki.mjs').then((m) => { const r = m.resolveEecCertPath(process.cwd()); if (!r.exists) { console.error('找不到终端签名证书:' + r.candidates.map((c) => c.rel).join(' 或 ')); process.exit(1); } if (r.isPlaceholder) { console.error('终端签名证书仍是占位文件 ' + r.rel + ',请替换为 ' + r.candidates[0].rel); process.exit(1); } process.stdout.write(r.path); })")"
           echo "终端签名证书:$eec"
           openssl verify -CAfile "$ROOT_CA_PATH" "$eec"
           openssl x509 -in "$eec" -noout -subject -issuer -enddate

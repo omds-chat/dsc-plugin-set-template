@@ -15,6 +15,9 @@
  *   node scripts/build-collection.mjs --dir . --root-ca root_ca.crt --out dist
  *   EEC_SECRET_KEY=... node scripts/build-collection.mjs --dir . --root-ca root_ca.crt --sign --out dist
  *   node scripts/build-collection.mjs --dir template --allow-placeholder-eec --out dist
+ *
+ * 骨架里 certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_ 是占位文件,不是证书:
+ * 带 --sign 时直接拒绝签名并提示替换;不带 --sign 时按 --allow-placeholder-eec 决定报错还是警告。
  */
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -37,6 +40,7 @@ import {
   VERSION_SIGNED_FILES,
   certMatchesKey,
   describeCertificate,
+  placeholderEecNotice,
   requireOpenssl,
   resolveEecCertPath,
   resolveKeyFile,
@@ -59,15 +63,16 @@ function usage() {
     '  --out <目录>                分发内容输出目录,默认 dist',
     '  --root-ca <路径>            根证书路径,用于校验证书链与 CMS 签名',
     '  --sign                      用 EEC_SECRET_KEY 为三层清单与每个版本的 plugin.js 生成 CMS 分离签名',
-    '  --allow-placeholder-eec     骨架模式:根证书缺失或终端签名证书未由根 CA 签发时只警告',
-    '  --collection-name <名称>    合集名称,默认取合集目录名;同时决定证书文件名 certs/<合集 id>-eec.crt',
+    '  --allow-placeholder-eec     骨架模式:终端签名证书仍是占位文件、根证书缺失或证书未由根 CA 签发时只警告',
+    '  --collection-name <名称>    合集名称,默认取合集目录名;同时决定证书所在文件夹与文件名 certs/<合集 id>/<合集 id>-eec.crt',
     '  --help                      显示本说明',
     '',
     '环境变量:',
     '  ROOT_CA_PATH                根证书路径,等价于 --root-ca',
     '  EEC_SECRET_KEY              EEC 私钥,可为 PEM 文本或文件路径',
     '',
-    '终端签名证书按 certs/<合集 id>-eec.crt 读取,旧的根目录 eec.pem 仅作兼容回退。',
+    '终端签名证书按 certs/<合集 id>/<合集 id>-eec.crt、certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_、',
+    '根目录 eec.pem 的顺序读取;占位文件不是证书,--sign 会拒绝签名并提示替换。',
     '',
   ].join('\n'))
 }
@@ -185,7 +190,8 @@ function readVersionList(path) {
 
 /**
  * 解析 EEC 私钥并确认与合集内的终端签名证书配对。不配对时直接失败,避免产出一批无法验签的签名。
- * 证书位置按 certs/<合集 id>-eec.crt 解析,旧的根目录 eec.pem 走兼容回退。
+ * 证书位置按 certs/<合集 id>/<合集 id>-eec.crt、占位文件、旧布局 eec.pem 的顺序解析;
+ * 解析到占位文件时拒绝签名:占位文件不是证书,提示先替换成真实证书。
  */
 function prepareSigner(root, problems, options = {}) {
   const source = process.env.EEC_SECRET_KEY
@@ -198,6 +204,10 @@ function prepareSigner(root, problems, options = {}) {
     problems.push(
       problem('error', 'EEC_MISSING', '缺少终端签名证书 ' + eec.candidates[0].rel + ',无法签名', eec.candidates[0].rel),
     )
+    return null
+  }
+  if (eec.isPlaceholder) {
+    problems.push(problem('error', 'EEC_PLACEHOLDER', '拒绝签名:' + placeholderEecNotice(eec), eec.rel))
     return null
   }
   // 旧布局提示统一由 verifyCollection 给出,这里不重复报,免得同一条警告出现两次。
@@ -393,7 +403,8 @@ function collectIndex(root) {
 /** 读取分发内容里终端签名证书的指纹。证书位置与校验阶段用同一套解析,不重复推导。 */
 function readEecFingerprint(root, options = {}) {
   const eec = resolveEecCertPath(root, options)
-  if (!eec.exists) return null
+  // 占位文件不是证书,读不出指纹:build-info.json 的 eec_sha256 记为 null,由校验阶段报 EEC_PLACEHOLDER。
+  if (!eec.exists || eec.isPlaceholder) return null
   try {
     return describeCertificate(eec.path).fingerprint
   } catch {
@@ -412,8 +423,10 @@ function writeDist(root, outDir, collectionName) {
     copyFileSync(src, join(outDir, name))
     files += 1
   }
-  // 终端签名证书所在的整个 certs/ 目录原样复制:目录里除 <合集 id>-eec.crt 还可能有轮换中的证书,
-  // 只挑单个文件名会在改名或轮换时漏发,客户端随后便拿不到能验签的证书。
+  // 终端签名证书所在的整个 certs/ 目录原样复制:目录里除合集自身的 <合集 id>/<合集 id>-eec.crt ,
+  // 还可能有其他来源的证书与轮换中的证书,只挑单个文件名会在改名或轮换时漏发,
+  // 客户端随后便拿不到能验签的证书。
+  // 骨架模式下占位文件也会一起复制,那是本地试跑用的临时产物,发布前必须先换成真实证书。
   files += copyTree(join(root, EEC_CERT_DIR), join(outDir, EEC_CERT_DIR))
   // 旧布局回退:根目录仍有 eec.pem 时一并分发,旧的验签方才能按老路径取到证书;回退删除后这段一起删。
   if (existsSync(join(root, EEC_CERT_FILE))) {

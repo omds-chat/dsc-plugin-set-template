@@ -50,7 +50,9 @@ dsc 生态的插件合集模板。照抄本仓库,可以快速得到一个符合
 │   └── lib/collection-verify.mjs           两个入口共用的校验逻辑
 └── template/                               合集骨架,复制即用
     ├── certs/
-    │   └── template-eec.crt                占位证书,必须换成根 CA 签发的证书
+    │   └── template/
+    │       └── _REPLACE_THIS_FILE_AS_YOUR_EEC_
+    │                                       占位文件,须换成 certs/<合集 id>/<合集 id>-eec.crt
     ├── meta.json
     ├── plugins.json
     ├── tags.json
@@ -68,14 +70,43 @@ dsc 生态的插件合集模板。照抄本仓库,可以快速得到一个符合
 
 ```bash
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out eec_secret.pem
-openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<合集名>'
+openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omds-chat/CN=<合集名>'
 ```
 
-4. 把 `eec.csr` 交给根 CA(`DeepSeek-Chat-Enhanced` 仓库)签发,拿回证书后写到 `certs/<合集 id>-eec.crt`。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,新建合集通常就是仓库目录名。骨架里的 `template/certs/template-eec.crt` 是占位证书,不能用于任何真实签名,复制到新仓库后必须按新合集 id 改名。
+4. 把 `eec.csr` 交给根 CA(`DeepSeek-Chat-Enhanced` 仓库)签发,拿回证书后写到 `certs/<合集 id>/<合集 id>-eec.crt`。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,新建合集通常就是仓库目录名。骨架里的 `certs/template/` 与新的合集 id 不同名,复制后要改名为 `certs/<新合集 id>/`;文件夹里的 `_REPLACE_THIS_FILE_AS_YOUR_EEC_` 是占位文件而不是证书,必须把它换成 `certs/<新合集 id>/<新合集 id>-eec.crt` 并删除占位文件。占位文件只用来占位:签名与验签都拒绝它,详见[占位文件与测试流程](#占位文件与测试流程)。
 5. 把 `eec_secret.pem` 放进 CI secret `EEC_SECRET_KEY`;把根证书放进 `secrets.ROOT_CA_PEM`,或把 online-data 分支的根证书地址放进 `vars.ROOT_CA_URL`。私钥不得入库。
 6. 编辑 `meta.json`:默认关闭下载计数。若要启用,把 `DOWNLOAD_COUNT_ENABLE` 置为 `true`,并同时给出 `DOWNLOAD_COUNT_API` 与 `API_NEED_IP`。
 7. 在 `plugins/` 下建立作者目录与插件目录,命名规则与必需文件见 `template/plugins/README.md`;在插件目录索引 `plugins.json` 登记插件,在 `tags.json` 声明预设标签,在 `plugins/author_manifest.json` 登记作者。
 8. 在 `.github/plugins-sources.json` 中登记插件来源,运行 `pnpm import` 收录插件,再运行 `pnpm verify` 确认自洽,最后运行 `pnpm build` 生成 `dist/`。
+
+## 占位文件与测试流程
+
+### 占位文件
+
+`template/certs/template/_REPLACE_THIS_FILE_AS_YOUR_EEC_` 是纯文本文件,不是证书:它只占住终端签名证书的位置,提醒这个位置要换成 `certs/<合集 id>/<合集 id>-eec.crt`。脚本对它的处理是固定的:
+
+| 入口 | 行为 |
+|:---:|:---:|
+| `resolveEecCertPath(dir)` | 按上一节的顺序解析,命中占位文件时 `layout` 为 `placeholder`、`isPlaceholder` 为 `true`,调用方可直接区分 |
+| `build-collection.mjs` | 带 `--sign` 时拒绝签名,报 `EEC_PLACEHOLDER` 并给出应替换成的路径,不产出任何签名 |
+| `verify-collection.mjs` | 报 `EEC_PLACEHOLDER`:骨架模式下是警告,否则是错误。占位文件不参与证书链、有效期与 `keyUsage` 检查,CMS 相关校验退化为「缺少根证书或终端签名证书」的警告,不会崩溃 |
+| `pki.mjs` 的 `signFileCms`、`signManifest`、`verifyFileCms` | 直接拒绝:签名抛 `PkiError`,验签返回 `{ ok: false, reason }`,文案写明占位文件不能用于签名或验签 |
+
+真实证书就位后必须删除占位文件:`pnpm build` 把整个 `certs/` 复制进 `dist/`,残留的占位文件会一起被分发。
+
+### 在临时测试仓库里试跑
+
+验证骨架、脚本改动或新的合集 id 时,不要直接改本仓库:在仓库内建一个临时测试仓库,所有操作都在里面做,结束后删掉。`temp/` 已被 `.gitignore` 忽略,原仓库不会因测试产生任何改动。
+
+| 步骤 | 操作 | 说明 |
+|:---:|:---:|:---:|
+| 1 | 把仓库复制到 `temp/test-eec/` | `mkdir -p temp/test-eec && cp -r template/. temp/test-eec/ && cp -r scripts schemas .github package.json pnpm-lock.yaml pnpm-workspace.yaml .gitattributes temp/test-eec/`。临时测试仓库是「复制即用」的合集布局:骨架内容在根目录,`scripts/` 与 `schemas/` 同在根目录,不必重新安装依赖 |
+| 2 | 从组织离线密钥库取测试用终端签名证书,替换占位文件 | 先把 `certs/template/` 改名为 `certs/<临时合集 id>/`(临时合集 id 默认是目录名 `test-eec`),再把证书写成 `certs/<临时合集 id>/<临时合集 id>-eec.crt`,并删除同目录的占位文件。根证书也从组织离线密钥库取 |
+| 3 | 修改临时仓库里的合集 id 与相关代码 | 需要别的 id 时改文件夹名,或校验时加 `--collection-name`;按需改 `meta.json`、`plugins.json`、`tags.json`、`package.json` 与 `.github/workflows/build-and-deploy.yml`。只改 `temp/` 里的副本 |
+| 4 | 在临时仓库里跑校验 | `cd temp/test-eec && node scripts/verify-collection.mjs --dir . --root-ca <根证书路径>`。真实证书就位后不应再出现 `EEC_PLACEHOLDER` 与 `EEC_PLACEHOLDER_LEFT` |
+| 5 | 清理 | `rm -rf temp/test-eec`。测试证书与根证书只留在临时目录,不入库、不提交 |
+
+临时测试仓库里的一切都是临时的:测试证书、根证书与改过的合集 id 不得回流到原仓库,原仓库的 `certs/` 里只留占位文件。
 
 ## 签名与证书链
 
@@ -84,19 +115,20 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<合集
 | 角色 | 承担者 | 持有物 | 职责 |
 |:---:|:---:|:---:|:---:|
 | 根证书机构(CA) | `DeepSeek-Chat-Enhanced` 仓库 | 根私钥(离线,不入库)、根证书 | 签发终端签名证书(EEC),维护吊销列表 |
-| 终端签名方(EEC) | 插件合集仓库,例如 `awesome-dsc-plugin` | EEC 私钥(CI secret)、`certs/<合集 id>-eec.crt` | 用 CMS 分离签名给插件文件签名 |
-| 独立签名方 | 插件作者,含 omdsc-dev 自身 | 作者密钥对 | 用裸公钥分离签名追加一份作者签名 |
+| 终端签名方(EEC) | 插件合集仓库,例如 `awesome-dsc-plugin` | EEC 私钥(CI secret)、`certs/<合集 id>/<合集 id>-eec.crt` | 用 CMS 分离签名给插件文件签名 |
+| 独立签名方 | 插件作者,含 omds-chat 自身 | 作者密钥对 | 用裸公钥分离签名追加一份作者签名 |
 
 ### 证书位置
 
-终端签名证书放在合集根目录的 `certs/` 下,文件名由合集 id 决定。解析顺序固定,先新后旧:
+合集根目录的 `certs/` 按来源分文件夹,文件夹名与文件名都取签名材料本身的命名;终端签名证书是合集自己的来源,因此落在与合集 id 同名的文件夹里。解析顺序固定,先新后旧:
 
 | 顺序 | 路径 | 说明 |
 |:---:|:---:|:---:|
-| 1 | `certs/<合集 id>-eec.crt` | 现行布局,新证书一律放这里 |
-| 2 | `eec.pem` | 旧布局,仅为兼容尚未迁移的旧合集保留,新合集不得使用,回退在后续版本删除 |
+| 1 | `certs/<合集 id>/<合集 id>-eec.crt` | 现行布局,真实证书一律放这里 |
+| 2 | `certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_` | 骨架占位文件,表示该位置尚未换成证书;解析结果 `layout` 为 `placeholder`、`isPlaceholder` 为 `true`,签名与验签都拒绝它 |
+| 3 | `eec.pem` | 旧布局,仅为兼容尚未迁移的旧合集保留,新合集不得使用,回退在后续版本删除 |
 
-合集 id 的推导顺序:`--collection-name` 显式指定 > 目录内 `build-info.json` 的 `collection` 字段(分发目录 `dist/` 靠它回读)> 合集目录名。模板仓库自身走目录名,因此占位证书是 `template/certs/template-eec.crt`。命中旧布局时 `pnpm verify` 与 `pnpm build` 都报 `EEC_LEGACY_LAYOUT` 警告并给出应改成的文件名;`pnpm build` 把整个 `certs/` 目录复制进 `dist/`,根目录仍有 `eec.pem` 时一并复制,旧验签方因此仍能取到证书。
+同一文件夹里可以一并放该来源的公钥,文件名以 `.pub` 结尾;私钥一律不入库。合集 id 的推导顺序:`--collection-name` 显式指定 > 目录内 `build-info.json` 的 `collection` 字段(分发目录 `dist/` 靠它回读)> 合集目录名。模板仓库自身走目录名,因此占位文件是 `template/certs/template/_REPLACE_THIS_FILE_AS_YOUR_EEC_`。命中旧布局时 `pnpm verify` 与 `pnpm build` 都报 `EEC_LEGACY_LAYOUT` 警告并给出应改成的路径;命中占位文件时报 `EEC_PLACEHOLDER`,提示应替换成哪个文件。真实证书就位而占位文件仍在时,校验报 `EEC_PLACEHOLDER_LEFT` 提醒删除。`pnpm build` 把整个 `certs/` 目录复制进 `dist/`,根目录仍有 `eec.pem` 时一并复制,旧验签方因此仍能取到证书。
 
 ### 算法与格式
 
@@ -115,7 +147,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<合集
 ```bash
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out root_secret.pem
 openssl req -x509 -new -key root_secret.pem -days 3650 -out root_ca.crt \
-  -subj '/O=omdsc-dev/CN=omdsc-dev Root CA' \
+  -subj '/O=omds-chat/CN=omds-chat Root CA' \
   -addext 'keyUsage=critical,keyCertSign,cRLSign' \
   -addext 'basicConstraints=critical,CA:TRUE,pathlen:0'
 ```
@@ -124,15 +156,15 @@ openssl req -x509 -new -key root_secret.pem -days 3650 -out root_ca.crt \
 
 ```bash
 openssl x509 -req -in eec.csr -CA root_ca.crt -CAkey root_secret.pem -CAcreateserial \
-  -out certs/<合集 id>-eec.crt -days 365 \
+  -out certs/<合集 id>/<合集 id>-eec.crt -days 365 \
   -extfile <(printf 'keyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\n')
 ```
 
 合集签名与验签。三层清单与 `plugin.js` 用同一条命令,只是文件名不同:
 
 ```bash
-openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer certs/<合集 id>-eec.crt -inkey eec_secret.pem -nocerts -noattr
-openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile certs/<合集 id>-eec.crt
+openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer certs/<合集 id>/<合集 id>-eec.crt -inkey eec_secret.pem -nocerts -noattr
+openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile certs/<合集 id>/<合集 id>-eec.crt
 ```
 
 `-md sha512` 固定摘要算法,不依赖 OpenSSL 的默认值。`-outform DER` 不可省略。默认输出是 S/MIME `multipart/signed` 包装,浏览器无法解析,而插件市场要在浏览器里验签,所以 DER 是跨仓库统一格式:签名方固定 `-outform DER`,验签方固定 `-inform DER`,任何一方改用默认格式都会验签失败。产物可用 `openssl asn1parse -inform DER -in manifest.json.sig` 确认为 DER。
@@ -153,7 +185,8 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 ```text
 <collection>/
 ├── certs/
-│   └── <合集 id>-eec.crt        # 终端签名证书,随 Pages 分发,不进任何清单
+│   └── <合集 id>/
+│       └── <合集 id>-eec.crt    # 终端签名证书,随 Pages 分发,不进任何清单
 ├── meta.json                  # L1
 ├── plugins.json               # L1
 ├── tags.json                  # L1
@@ -227,10 +260,10 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 | 编号 | 规则 |
 |:---:|:---:|
-| 1 | 终端签名证书存在:先找 `certs/<合集 id>-eec.crt`,找不到才回退旧的根目录 `eec.pem` 并报 `EEC_LEGACY_LAYOUT` 提示;由给定根证书签发(`--root-ca` 或 `ROOT_CA_PATH`),未过期,`keyUsage` 含 `digitalSignature`,`basicConstraints` 非 CA |
+| 1 | 终端签名证书存在:先找 `certs/<合集 id>/<合集 id>-eec.crt`,再认骨架占位文件 `certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_`,命中占位文件时只报 `EEC_PLACEHOLDER` 提示、不做证书解析,最后才回退旧的根目录 `eec.pem` 并报 `EEC_LEGACY_LAYOUT` 提示;真实证书须由给定根证书签发(`--root-ca` 或 `ROOT_CA_PATH`),未过期,`keyUsage` 含 `digitalSignature`,`basicConstraints` 非 CA |
 | 2 | 插件目录索引 `plugins.json` 中的每个插件都在 `plugins/<author>/plugin_manifest.json` 中出现,且插件目录存在 |
 | 3 | 每个插件目录有 `versions.json`,`latest` 必须在 `versions` 列表内 |
-| 4 | 每个版本目录有 `meta.json`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -md sha512 -inform DER -CAfile <根证书> -certfile certs/<合集 id>-eec.crt` 验签,失败即报错 |
+| 4 | 每个版本目录有 `meta.json`、`plugin.js`、`plugin.js.sig`,并用 `openssl cms -verify -binary -md sha512 -inform DER -CAfile <根证书> -certfile certs/<合集 id>/<合集 id>-eec.crt` 验签,失败即报错 |
 | 5 | 若版本目录存在 `plugin.js.author.sig`,则 `plugins/<author>/author_pub.pem` 必须存在,并用 `openssl pkeyutl -verify` 验证,失败即报错;其它 `*.author.sig` 不参与校验 |
 | 6 | `tags.json` 存在时,`plugins.json` 的 `tag` 必须取自其中 |
 | 7 | 三层清单存在且结构合法:`schemaVersion` 为 1,`revision` 为正整数,`files` 为非空数组,条目只含 `path` 与 `sha512` |
@@ -241,7 +274,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | 12 | 作者目录名、`plugins.json` 的 `author` 与 `plugins/author_manifest.json` 的 `username` 都必须是合法的 GitHub 用户名,正则 `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`,不区分大小写,长度上限 39,不得以连字符开头或结尾。目录名不符报 `AUTHOR_DIR_NAME_INVALID` 并指出 `plugins/<目录>`;`author` 与 `username` 不符分别报 `PLUGINS_INDEX_INVALID`、`AUTHOR_MANIFEST_INVALID` |
 | 13 | 插件名必须带 `dsc-` 前缀。`plugins.json` 的 `plugin_name` 与 `plugins/<作者>/plugin_manifest.json` 的每一项都按 `PLUGIN_NAME_PATTERN` 校验,即 `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`,缺前缀报 `PLUGINS_INDEX_INVALID` 或 `PLUGIN_MANIFEST_INVALID` |
 
-`pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:根证书缺失、终端签名证书未由根 CA 签发、三层清单或清单签名尚未生成时降级为警告。真实合集的 CI 不带这个开关;`--allow-missing-manifest` 只放开清单与清单签名缺失,结构与哈希检查照常执行。
+`pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:终端签名证书仍是占位文件、根证书缺失、终端签名证书未由根 CA 签发、三层清单或清单签名尚未生成时降级为警告。占位文件只在骨架模式下降级,它始终不会被当成证书解析;真实合集的 CI 不带这个开关,占位文件没换掉就是错误。`--allow-missing-manifest` 只放开清单与清单签名缺失,结构与哈希检查照常执行。
 
 本仓库的脚本是发布前的强校验:除上面显式放开的开关,任一错误都会阻断发布。
 
@@ -265,6 +298,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | `describeCertificate(certPath)` | 读取主题、签发者、有效期、`keyUsage`、`basicConstraints` |
 | `verifyChain(certPath, rootCrt)` | 等价于 `openssl verify -CAfile <根证书> <证书>` |
 | `certMatchesKey(certPath, keyPath)` | 判断证书与私钥是否配对,签名前用它拦住用错私钥 |
+| `resolveEecCertPath(dir)` | 解析终端签名证书位置,按现行布局、占位文件、旧布局的顺序命中,返回 `layout`(`certs`、`placeholder`、`legacy`)与 `isPlaceholder` |
 
 ## 校验与部署流程
 
@@ -273,14 +307,15 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 - 自动化:推送到 main 或手动触发 `build-and-deploy`,依次安装依赖、按清单收录插件、解析根证书、用 `openssl verify` 校验终端签名证书的证书链、用 `EEC_SECRET_KEY` 签名并构建 `dist/`、对 `dist/` 再跑一次完整校验,最后发布到 Pages。
 - 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 online-data 分支拉取。
 - 签名私钥只从 secrets 读取,仓库内不存放任何私钥。
-- 分发必须开启跨域访问,至少放行 `omdsc-dev.github.io`。
+- 分发必须开启跨域访问,至少放行 `omds-chat.github.io`。
 
 ## 安全提示
 
 - 根私钥离线保管,只在签发 EEC 或生成 CRL 时使用;EEC 私钥与作者私钥只放 CI secrets 与本地环境变量。`.gitignore` 已排除 `.env`。
 - 终端签名证书被替换或私钥泄露时,应立刻通知根 CA 吊销并重新签发;`crl.pem` 生成后,验签方追加 `--crl_check` 即可生效。
 - 签名针对文件字节。CMS 签名与作者签名都是逐字节语义(分别用 `-binary` 与 `-rawin`),换行、缩进或空白的任何改动都会让校验失败;把 LF 改成 CRLF 同样会失败,仓库统一使用 LF。
-- `build-collection.mjs --sign` 会先确认 `EEC_SECRET_KEY` 与仓库内终端签名证书配对,不配对直接失败,避免产出一批无法验签的签名。
+- `build-collection.mjs --sign` 会先确认 `EEC_SECRET_KEY` 与仓库内终端签名证书配对,不配对直接失败,避免产出一批无法验签的签名;证书仍是占位文件时同样直接失败。
+- 占位文件与测试用证书都不得入库、不得进入分发:发布前确认 `certs/<合集 id>/` 里只有真实终端签名证书,没有残留的 `_REPLACE_THIS_FILE_AS_YOUR_EEC_`。
 - 校验失败时不要绕过。错误信息会指出具体文件与失败原因。
 
 ## 许可

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/plugins.schema.json",
+  "$id": "https://omds-chat.github.io/awesome-dsc-plugin-set-template/schemas/plugins.schema.json",
   "title": "dsc-plugin-collection-plugins-index",
   "description": "插件合集根目录的 plugins.json,即插件目录索引,收录合集内全部插件。合集根必需文件,由 L1 清单覆盖。它与同级的 plugins/ 目录成对,因此文件名用 plugins.json。plugin_name 在合集内唯一,由校验脚本查重。",
   "type": "array",

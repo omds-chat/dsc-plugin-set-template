@@ -27,6 +27,8 @@ import {
   describePublicKey,
   hasDigitalSignature,
   legacyEecNotice,
+  leftoverPlaceholderNotice,
+  placeholderEecNotice,
   resolveEecCertPath,
   verifyChain,
   verifyFileAuthor,
@@ -41,8 +43,9 @@ export const PLUGINS_INDEX_FILE = 'plugins.json'
 
 /**
  * 合集根目录必需的文件。tags.json 可选,存在时才要求被 L1 清单覆盖。
- * 终端签名证书不在本表:它的位置由 resolveEecCertPath 按 certs/<合集 id>-eec.crt 解析,
- * 并对旧的根目录 eec.pem 回退,不能写死成根目录文件。
+ * 终端签名证书不在本表:它的位置由 resolveEecCertPath 解析,先找 certs/<合集 id>/<合集 id>-eec.crt,
+ * 再认骨架占位文件 certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_,最后才对旧的根目录 eec.pem 回退,
+ * 不能写死成根目录文件。
  */
 export const ROOT_REQUIRED_FILES = ['meta.json', PLUGINS_INDEX_FILE]
 /** 版本目录内必需的文件。meta.json.sig 已取消,产物本体只由 plugin.js.sig 签名 */
@@ -407,8 +410,9 @@ export function resolveRootCaPath(options = {}, env = process.env) {
  * @param {string} collectionDir 合集根目录
  * @param {object} [options] 选项
  * @param {string|null} [options.rootCaPath] 根证书路径,缺失时无法校验证书链与 CMS 签名
- * @param {boolean} [options.allowPlaceholderEec] 骨架模式:根证书缺失或终端签名证书未由根 CA 签发时降级为警告
- * @param {string} [options.collectionName] 合集名称,默认取目录名;同时决定终端签名证书的文件名 certs/<合集 id>-eec.crt
+ * @param {boolean} [options.allowPlaceholderEec] 骨架模式:终端签名证书仍是占位文件、根证书缺失、
+ *   证书未由根 CA 签发、清单或清单签名尚未生成时降级为警告;占位文件之外的证书错误仍是错误
+ * @param {string} [options.collectionName] 合集名称,默认取目录名;同时决定终端签名证书的文件夹与文件名 certs/<合集 id>/<合集 id>-eec.crt
  * @returns {{ok: boolean, root: string, collectionName: string, errorCount: number, warningCount: number, problems: Array<object>, stats: object}}
  */
 export function verifyCollection(collectionDir, options = {}) {
@@ -425,9 +429,12 @@ export function verifyCollection(collectionDir, options = {}) {
   }
   const skeleton = options.allowPlaceholderEec === true
   // 骨架模式与 --allow-missing-manifest 都把「清单尚未生成」降级为警告,结构与哈希检查照常执行。
+  // 骨架模式的另一半含义是「终端签名证书仍是占位文件」:占位文件只在骨架模式下降级为警告,
+  // 它本身没有任何证书语义,因此不进证书链、有效期与 keyUsage 的检查,也不会让脚本崩溃。
   const allowMissingManifest = options.allowMissingManifest === true || skeleton
   const rootCaPath = options.rootCaPath ? resolve(options.rootCaPath) : null
-  // 终端签名证书按 certs/<合集 id>-eec.crt 解析,旧的根目录 eec.pem 只作兼容回退。
+  // 终端签名证书按 certs/<合集 id>/<合集 id>-eec.crt、占位文件、旧布局 eec.pem 的顺序解析;
+  // 命中占位文件时只提示替换,不把它当证书解析。
   // 合集名与证书文件名同源:显式名称 > build-info.json 的 collection > 目录名,
   // 因此校验分发目录 dist/ 时报出的合集名仍是真实合集名,而不是 dist。
   const eec = resolveEecCertPath(root, options)
@@ -482,19 +489,30 @@ export function verifyCollection(collectionDir, options = {}) {
   if (!eec.exists) {
     report.error(
       'EEC_MISSING',
-      '缺少终端签名证书:既没有 ' + eec.candidates[0].rel +
-        '(合集 id 为 ' + JSON.stringify(eec.collectionId) + ',' + collectionIdSourceLabel(eec.collectionIdSource) + '),' +
-        '也没有旧布局的 ' + eec.candidates[1].rel,
+      '缺少终端签名证书:certs/ 下既没有 ' + eec.candidates[0].rel + ',也没有占位文件 ' + eec.candidates[1].rel +
+        ',根目录也没有旧布局的 ' + eec.candidates[2].rel +
+        '(合集 id 为 ' + JSON.stringify(eec.collectionId) + ',' + collectionIdSourceLabel(eec.collectionIdSource) + ')',
       eec.candidates[0].rel,
     )
+  } else if (eec.isPlaceholder) {
+    // 占位文件不是证书:只给一条可读提示,跳过证书链、有效期与 keyUsage 检查。
+    // CMS 相关校验因 cmsReady 为 false 退化为「无法校验」警告,不会在这里中断。
+    report[chainLevel]('EEC_PLACEHOLDER', placeholderEecNotice(eec), eecRel)
   } else {
     if (eec.layout === 'legacy') report.warn('EEC_LEGACY_LAYOUT', legacyEecNotice(eec), eecRel)
+    const leftover = eec.candidates.find((item) => item.layout === 'placeholder' && item.present)
+    if (leftover) report.warn('EEC_PLACEHOLDER_LEFT', leftoverPlaceholderNotice(eec), leftover.rel)
     let cert = null
     try {
       cert = describeCertificate(eecPath)
       eecParsed = true
     } catch (error) {
-      report.error('EEC_INVALID', eecRel + ' 不是可解析的 X.509 证书:' + error.message, eecRel)
+      report.error(
+        'EEC_INVALID',
+        eecRel + ' 不是可解析的 X.509 证书:' + error.message +
+          ';若该文件仍是骨架占位文件或空文件,请替换为组织离线密钥库中的终端签名证书',
+        eecRel,
+      )
     }
     if (cert) {
       if (!rootCaPath) {

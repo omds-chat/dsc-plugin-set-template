@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omdsc-dev.github.io/awesome-dsc-plugin-set-template/schemas/author-manifest.schema.json",
+  "$id": "https://omds-chat.github.io/awesome-dsc-plugin-set-template/schemas/author-manifest.schema.json",
   "title": "dsc-plugin-collection-author-manifest",
   "description": "插件合集 plugins/author_manifest.json,登记的作者清单,由 L1 清单覆盖。username 对应 plugins/ 下的同名目录,在清单内不重复;重复登记由校验脚本警告,不阻断。",
   "type": "array",

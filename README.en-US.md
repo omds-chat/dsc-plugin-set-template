@@ -50,7 +50,9 @@ This repository is not a plugin collection. It ships the skeleton and the specif
 │   └── lib/collection-verify.mjs           shared verification logic
 └── template/                               collection skeleton, copy and use
     ├── certs/
-    │   └── template-eec.crt                placeholder certificate, must be replaced
+    │   └── template/
+    │       └── _REPLACE_THIS_FILE_AS_YOUR_EEC_
+    │                                       placeholder file, replace with certs/<collection id>/<collection id>-eec.crt
     ├── meta.json
     ├── plugins.json
     ├── tags.json
@@ -63,19 +65,48 @@ This repository is not a plugin collection. It ships the skeleton and the specif
 ## Create a collection from this template
 
 1. Create a new repository and copy everything under `template/` to its root.
-2. Also copy `scripts/`, `package.json`, `schemas/` and `.github/` from the root of this template repository into the new repository root. `template/` ships the collection data skeleton only and deliberately excludes those four: without `package.json` and `scripts/` there is no `pnpm verify` or `pnpm build`, without `schemas/` the written contract is gone, and without `.github/` there is no plugin source manifest and no build-and-deploy pipeline. Adjust the placeholders afterwards: `name` and `repository` in `package.json`, the deployment settings in `.github/workflows/build-and-deploy.yml`, and the certificate file name described in step 4.
+2. Also copy `scripts/`, `package.json`, `schemas/` and `.github/` from the root of this template repository into the new repository root. `template/` ships the collection data skeleton only and deliberately excludes those four: without `package.json` and `scripts/` there is no `pnpm verify` or `pnpm build`, without `schemas/` the written contract is gone, and without `.github/` there is no plugin source manifest and no build-and-deploy pipeline. Adjust the placeholders afterwards: `name` and `repository` in `package.json`, the deployment settings in `.github/workflows/build-and-deploy.yml`, and the certificate folder and file name described in step 4.
 3. Generate the EEC private key and a certificate signing request locally:
 
 ```bash
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out eec_secret.pem
-openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collection-name>'
+openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omds-chat/CN=<collection-name>'
 ```
 
-4. Hand `eec.csr` to the root CA (the `DeepSeek-Chat-Enhanced` repository) and write the issued certificate to `certs/<collection id>-eec.crt`. The collection id comes from `--collection-name`, otherwise from the `collection` field of `build-info.json` in a distribution directory, otherwise from the collection directory name, which for a new collection is normally its repository name. `template/certs/template-eec.crt` is a placeholder and must not be used for real signing; rename it to the new collection id after copying.
+4. Hand `eec.csr` to the root CA (the `DeepSeek-Chat-Enhanced` repository) and write the issued certificate to `certs/<collection id>/<collection id>-eec.crt`. The collection id comes from `--collection-name`, otherwise from the `collection` field of `build-info.json` in a distribution directory, otherwise from the collection directory name, which for a new collection is normally its repository name. The skeleton ships `certs/template/`, which does not match a new collection id, so rename it to `certs/<new collection id>/` after copying. `_REPLACE_THIS_FILE_AS_YOUR_EEC_` inside that folder is a placeholder file, not a certificate: replace it with `certs/<new collection id>/<new collection id>-eec.crt` and delete the placeholder. Both signing and verification reject the placeholder; see [Placeholder file and test flow](#placeholder-file-and-test-flow).
 5. Put `eec_secret.pem` into the CI secret `EEC_SECRET_KEY`. Put the root certificate into `secrets.ROOT_CA_PEM`, or put the online-data URL of the root certificate into `vars.ROOT_CA_URL`. Never commit a private key.
 6. Edit `meta.json`. Download counting is off by default. To enable it, set `DOWNLOAD_COUNT_ENABLE` to `true` and provide both `DOWNLOAD_COUNT_API` and `API_NEED_IP`.
 7. Create author and plugin directories under `plugins/`. Naming rules and required files are in `template/plugins/README.md`. Register plugins in the plugin directory index `plugins.json`, declare preset tags in `tags.json` and register authors in `plugins/author_manifest.json`.
 8. Register plugin sources in `.github/plugins-sources.json`, run `pnpm import` to import them, run `pnpm verify` to confirm consistency, then run `pnpm build` to produce `dist/`.
+
+## Placeholder file and test flow
+
+### The placeholder file
+
+`template/certs/template/_REPLACE_THIS_FILE_AS_YOUR_EEC_` is a plain text file, not a certificate: it only holds the place of the end-entity signing certificate and reminds you that the slot must become `certs/<collection id>/<collection id>-eec.crt`. The scripts treat it consistently:
+
+| Entry point | Behaviour |
+|:---:|:---:|
+| `resolveEecCertPath(dir)` | Resolves in the order above; on a placeholder hit `layout` is `placeholder` and `isPlaceholder` is `true`, so callers can tell it apart |
+| `build-collection.mjs` | With `--sign` it refuses to sign, reports `EEC_PLACEHOLDER` and names the path to use instead; no signature is produced |
+| `verify-collection.mjs` | Reports `EEC_PLACEHOLDER`: a warning in skeleton mode, an error otherwise. The placeholder is never parsed as a certificate, so the chain, validity and `keyUsage` checks are skipped and the CMS checks degrade to "cannot verify" warnings instead of crashing |
+| `signFileCms`, `signManifest`, `verifyFileCms` in `pki.mjs` | Refuse outright: signing throws `PkiError`, verification returns `{ ok: false, reason }`, and the message states that the placeholder cannot be used |
+
+Delete the placeholder once the real certificate is in place: `pnpm build` copies the whole `certs/` directory into `dist/`, so a leftover placeholder is distributed as well.
+
+### Trying it out in a temporary test repository
+
+Never edit this repository to try out the skeleton, a script change or a new collection id. Create a temporary test repository inside the workspace, do everything there and delete it afterwards. `temp/` is already ignored by `.gitignore`, so the original repository sees no change from the test.
+
+| Step | Action | Notes |
+|:---:|:---:|:---:|
+| 1 | Copy the repository to `temp/test-eec/` | `mkdir -p temp/test-eec && cp -r template/. temp/test-eec/ && cp -r scripts schemas .github package.json pnpm-lock.yaml pnpm-workspace.yaml .gitattributes temp/test-eec/`. The temporary repository uses the ready-to-use collection layout: the skeleton sits at its root, with `scripts/` and `schemas/` beside it, so no dependency install is needed |
+| 2 | Take the test end-entity signing certificate from the organisation offline keystore and replace the placeholder | Rename `certs/template/` to `certs/<temporary collection id>/` first (the temporary collection id defaults to the directory name `test-eec`), then write the certificate to `certs/<temporary collection id>/<temporary collection id>-eec.crt` and delete the placeholder in that folder. Take the root certificate from the organisation offline keystore as well |
+| 3 | Change the collection id and related code in the temporary repository | Use a different id by renaming the folder or by passing `--collection-name`; adjust `meta.json`, `plugins.json`, `tags.json`, `package.json` and `.github/workflows/build-and-deploy.yml` as needed. Only the copy under `temp/` is touched |
+| 4 | Run the checks in the temporary repository | `cd temp/test-eec && node scripts/verify-collection.mjs --dir . --root-ca <root certificate path>`. Once the real certificate is in place neither `EEC_PLACEHOLDER` nor `EEC_PLACEHOLDER_LEFT` should appear |
+| 5 | Clean up | `rm -rf temp/test-eec`. The test certificate and the root certificate stay in the temporary directory: never commit them |
+
+Everything inside the temporary test repository is temporary: the test certificate, the root certificate and the changed collection id must not flow back into the original repository, whose `certs/` holds the placeholder file only.
 
 ## Signing and the certificate chain
 
@@ -84,19 +115,20 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omdsc-dev/CN=<collec
 | Role | Holder | Material | Responsibility |
 |:---:|:---:|:---:|:---:|
 | Root CA | `DeepSeek-Chat-Enhanced` repository | root private key (offline, never committed), root certificate | Issue end-entity signing certificates (EEC), maintain the revocation list |
-| End-entity signer (EEC) | a collection repository such as `awesome-dsc-plugin` | EEC private key (CI secret), `certs/<collection id>-eec.crt` | Sign plugin files with detached CMS signatures |
-| Independent signer | plugin authors, omdsc-dev included | author key pair | Append an author signature with a bare public key |
+| End-entity signer (EEC) | a collection repository such as `awesome-dsc-plugin` | EEC private key (CI secret), `certs/<collection id>/<collection id>-eec.crt` | Sign plugin files with detached CMS signatures |
+| Independent signer | plugin authors, omds-chat included | author key pair | Append an author signature with a bare public key |
 
 ### Certificate location
 
-The end-entity signing certificate lives in `certs/` under the collection root, and its file name is derived from the collection id. The lookup order is fixed:
+`certs/` under the collection root is split into per-source folders, and both the folder name and the file name come from the signing material itself; the end-entity signing certificate is the collection's own source, so it lives in the folder named after the collection id. The lookup order is fixed:
 
 | # | Path | Notes |
 |:---:|:---:|:---:|
-| 1 | `certs/<collection id>-eec.crt` | current layout, every new certificate goes here |
-| 2 | `eec.pem` | legacy layout, kept only to read collections that have not migrated; never use it for a new collection, and the fallback is removed in a later release |
+| 1 | `certs/<collection id>/<collection id>-eec.crt` | current layout, every real certificate goes here |
+| 2 | `certs/<collection id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_` | skeleton placeholder, meaning the slot has not been replaced yet; resolution returns `layout` `placeholder` and `isPlaceholder` `true`, and both signing and verification reject it |
+| 3 | `eec.pem` | legacy layout, kept only to read collections that have not migrated; never use it for a new collection, and the fallback is removed in a later release |
 
-The collection id is resolved as `--collection-name` when given, otherwise the `collection` field of `build-info.json` in the directory (that is how the distribution directory `dist/` reads it back), otherwise the collection directory name. The template repository itself uses its directory name, so its placeholder is `template/certs/template-eec.crt`. On a legacy hit both `pnpm verify` and `pnpm build` report `EEC_LEGACY_LAYOUT` and name the file to use instead. `pnpm build` copies the whole `certs/` directory into `dist/`, and still copies a root `eec.pem` when one is present so that older verifiers keep working.
+A source folder may also carry that source's public key, named with a `.pub` suffix; private keys are never committed. The collection id is resolved as `--collection-name` when given, otherwise the `collection` field of `build-info.json` in the directory (that is how the distribution directory `dist/` reads it back), otherwise the collection directory name. The template repository itself uses its directory name, so its placeholder file is `template/certs/template/_REPLACE_THIS_FILE_AS_YOUR_EEC_`. On a legacy hit both `pnpm verify` and `pnpm build` report `EEC_LEGACY_LAYOUT` and name the path to use instead; on a placeholder hit they report `EEC_PLACEHOLDER` and name the file to replace it with, and when the real certificate is in place but the placeholder is still there verification reports `EEC_PLACEHOLDER_LEFT` so it gets deleted. `pnpm build` copies the whole `certs/` directory into `dist/`, and still copies a root `eec.pem` when one is present so that older verifiers keep working.
 
 ### Algorithms and formats
 
@@ -115,7 +147,7 @@ Root CA (offline, only in the organisation signing environment):
 ```bash
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out root_secret.pem
 openssl req -x509 -new -key root_secret.pem -days 3650 -out root_ca.crt \
-  -subj '/O=omdsc-dev/CN=omdsc-dev Root CA' \
+  -subj '/O=omds-chat/CN=omds-chat Root CA' \
   -addext 'keyUsage=critical,keyCertSign,cRLSign' \
   -addext 'basicConstraints=critical,CA:TRUE,pathlen:0'
 ```
@@ -124,15 +156,15 @@ The root CA issues the EEC. Note that `openssl x509 -req` rejects `-addext`, so 
 
 ```bash
 openssl x509 -req -in eec.csr -CA root_ca.crt -CAkey root_secret.pem -CAcreateserial \
-  -out certs/<collection id>-eec.crt -days 365 \
+  -out certs/<collection id>/<collection id>-eec.crt -days 365 \
   -extfile <(printf 'keyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\n')
 ```
 
 Collection signing and verification. The three manifests and `plugin.js` share one command and differ only in the file name:
 
 ```bash
-openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer certs/<collection id>-eec.crt -inkey eec_secret.pem -nocerts -noattr
-openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile certs/<collection id>-eec.crt
+openssl cms -sign -binary -md sha512 -outform DER -in manifest.json -out manifest.json.sig -signer certs/<collection id>/<collection id>-eec.crt -inkey eec_secret.pem -nocerts -noattr
+openssl cms -verify -binary -md sha512 -inform DER -in manifest.json.sig -content manifest.json -CAfile root_ca.crt -certfile certs/<collection id>/<collection id>-eec.crt
 ```
 
 `-md sha512` pins the digest algorithm instead of relying on the OpenSSL default. `-outform DER` is not optional. The default output is an S/MIME `multipart/signed` wrapper, which browsers cannot parse, and the plugin market verifies signatures in the browser. DER is therefore the cross-repository format: signers always pass `-outform DER` and verifiers always pass `-inform DER`, and either side falling back to the default format breaks verification. Confirm the artifact with `openssl asn1parse -inform DER -in manifest.json.sig`.
@@ -153,7 +185,8 @@ To enable revocation checking, concatenate the root certificate and the CRL into
 ```text
 <collection>/
 ├── certs/
-│   └── <collection id>-eec.crt# end-entity signing certificate, shipped with Pages, covered by no manifest
+│   └── <collection id>/
+│       └── <collection id>-eec.crt  # end-entity signing certificate, shipped with Pages, covered by no manifest
 ├── meta.json                  # L1
 ├── plugins.json               # L1
 ├── tags.json                  # L1
@@ -227,10 +260,10 @@ The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocert
 
 | # | Rule |
 |:---:|:---:|
-| 1 | The end-entity signing certificate exists: `certs/<collection id>-eec.crt` is looked up first, and only when it is missing does the verifier fall back to a legacy root `eec.pem` and report `EEC_LEGACY_LAYOUT`; it chains to the given root certificate (`--root-ca` or `ROOT_CA_PATH`), is not expired, has `digitalSignature` in `keyUsage` and is not a CA |
+| 1 | The end-entity signing certificate exists: `certs/<collection id>/<collection id>-eec.crt` is looked up first, then the skeleton placeholder `certs/<collection id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_`, which only reports `EEC_PLACEHOLDER` and is never parsed as a certificate, and only when neither is present does the verifier fall back to a legacy root `eec.pem` and report `EEC_LEGACY_LAYOUT`; a real certificate chains to the given root certificate (`--root-ca` or `ROOT_CA_PATH`), is not expired, has `digitalSignature` in `keyUsage` and is not a CA |
 | 2 | Every plugin in the plugin directory index `plugins.json` appears in `plugins/<author>/plugin_manifest.json` and its plugin directory exists |
 | 3 | Every plugin directory has `versions.json` and `latest` is present in `versions` |
-| 4 | Every version directory has `meta.json`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -md sha512 -inform DER -CAfile <root> -certfile certs/<collection id>-eec.crt`; a failure is an error |
+| 4 | Every version directory has `meta.json`, `plugin.js` and `plugin.js.sig`, verified with `openssl cms -verify -binary -md sha512 -inform DER -CAfile <root> -certfile certs/<collection id>/<collection id>-eec.crt`; a failure is an error |
 | 5 | When `plugin.js.author.sig` exists in a version directory, `plugins/<author>/author_pub.pem` must exist and the signature must verify with `openssl pkeyutl -verify`; a failure is an error. Other `*.author.sig` files are not checked |
 | 6 | When `tags.json` exists, every `tag` in `plugins.json` comes from it |
 | 7 | All three manifests exist and are structurally valid: `schemaVersion` is 1, `revision` is a positive integer, `files` is a non-empty array, and each entry holds only `path` and `sha512` |
@@ -241,7 +274,7 @@ The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocert
 | 12 | Author directory names, `author` in `plugins.json` and `username` in `plugins/author_manifest.json` must all be valid GitHub usernames: `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`, case-insensitive, at most 39 characters, with no leading or trailing hyphen. A directory name that does not match reports `AUTHOR_DIR_NAME_INVALID` and names `plugins/<directory>`; a mismatched `author` or `username` reports `PLUGINS_INDEX_INVALID` or `AUTHOR_MANIFEST_INVALID` |
 | 13 | Plugin names must carry the `dsc-` prefix. `plugin_name` in `plugins.json` and every entry of `plugins/<author>/plugin_manifest.json` are checked against `PLUGIN_NAME_PATTERN`, that is `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`; a missing prefix reports `PLUGINS_INDEX_INVALID` or `PLUGIN_MANIFEST_INVALID` |
 
-`pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: a missing root certificate, an end-entity certificate that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. A real collection's CI does not pass that flag; `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
+`pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: an end-entity certificate that is still the placeholder file, a missing root certificate, an end-entity certificate that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. The placeholder is downgraded only in skeleton mode and is never parsed as a certificate; a real collection's CI does not pass that flag, so an unreplaced placeholder is an error there. `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
 
 The scripts here are a strict pre-release gate: apart from the flags above, any error blocks the release.
 
@@ -265,6 +298,7 @@ The scripts here are a strict pre-release gate: apart from the flags above, any 
 | `describeCertificate(certPath)` | Read subject, issuer, validity, `keyUsage` and `basicConstraints` |
 | `verifyChain(certPath, rootCrt)` | Equivalent to `openssl verify -CAfile <root> <cert>` |
 | `certMatchesKey(certPath, keyPath)` | Tell whether a certificate and a private key belong together, used before signing |
+| `resolveEecCertPath(dir)` | Resolve the end-entity certificate location, hitting the current layout, then the placeholder file, then the legacy layout, and return `layout` (`certs`, `placeholder`, `legacy`) with `isPlaceholder` |
 
 ## Verification and deployment
 
@@ -273,14 +307,15 @@ The scripts here are a strict pre-release gate: apart from the flags above, any 
 - Automation: a push to main or a manual `build-and-deploy` run installs dependencies, imports plugins from the manifest, resolves the root certificate, checks the chain of the end-entity signing certificate with `openssl verify`, signs with `EEC_SECRET_KEY` and builds `dist/`, runs a full verification on `dist/` and finally publishes to Pages.
 - The root certificate comes from one of two places: `secrets.ROOT_CA_PEM` (PEM text) wins, otherwise `vars.ROOT_CA_URL` is fetched from the online-data branch.
 - Signing keys come from secrets only. No private key is ever stored in the repository.
-- Distribution must allow cross-origin access, and must allow `omdsc-dev.github.io` at the very least.
+- Distribution must allow cross-origin access, and must allow `omds-chat.github.io` at the very least.
 
 ## Security notes
 
 - Keep the root private key offline and use it only to issue EECs or generate a CRL. Keep the EEC private key and author keys in CI secrets and local environment variables. `.gitignore` already excludes `.env`.
 - If the end-entity signing certificate is replaced or the private key leaks, ask the root CA to revoke it and issue a new one. Once `crl.pem` exists, verifiers add `--crl_check` and the revocation takes effect.
 - Signatures cover file bytes. CMS signatures use `-binary` and author signatures use `-rawin`, so both are byte-exact: any change to line endings, indentation or whitespace breaks verification, and converting LF to CRLF fails as well. The repository uses LF everywhere.
-- `build-collection.mjs --sign` first confirms that `EEC_SECRET_KEY` matches the committed end-entity signing certificate and fails otherwise, so it never produces signatures nobody can verify.
+- `build-collection.mjs --sign` first confirms that `EEC_SECRET_KEY` matches the committed end-entity signing certificate and fails otherwise, so it never produces signatures nobody can verify; it fails the same way while the certificate is still the placeholder file.
+- Neither the placeholder file nor a test certificate may be committed or distributed: before a release, confirm that `certs/<collection id>/` holds the real end-entity signing certificate only and that no `_REPLACE_THIS_FILE_AS_YOUR_EEC_` is left behind.
 - Never bypass a failed verification. The messages name the exact file and the reason.
 
 ## License

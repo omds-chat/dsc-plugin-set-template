@@ -6,7 +6,9 @@
  * 校验覆盖:证书链、三层哈希清单(存在性、结构、路径、覆盖范围、SHA-512、清单签名)、
  * 版本目录必需文件与 plugin.js.sig、作者签名、标签与插件登记的一致性。
  * 证书链与 CMS 签名校验需要根证书:用 --root-ca 指定,或设置环境变量 ROOT_CA_PATH。
- * 终端签名证书按 certs/<合集 id>-eec.crt 读取,旧的根目录 eec.pem 仅作兼容回退。
+ * 终端签名证书按 certs/<合集 id>/<合集 id>-eec.crt、骨架占位文件
+ * certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_、旧布局 eec.pem 的顺序解析。
+ * 命中占位文件时报 EEC_PLACEHOLDER:骨架模式下是警告,否则是错误;两种情况都只给提示,不做证书解析。
  *
  * 用法:
  *   node scripts/verify-collection.mjs --dir . --root-ca root_ca.crt
@@ -24,16 +26,18 @@ function usage() {
     '选项:',
     '  --dir <目录>                合集根目录,默认当前目录',
     '  --root-ca <路径>            根证书路径,用于校验证书链与 CMS 签名',
-    '  --allow-placeholder-eec     骨架模式:根证书缺失、终端签名证书未由根 CA 签发、清单或清单签名缺失时只警告',
+    '  --allow-placeholder-eec     骨架模式:终端签名证书仍是占位文件、根证书缺失、证书未由根 CA 签发、',
+    '                              清单或清单签名缺失时只警告',
     '  --allow-missing-manifest    只放开三层清单与清单签名缺失,结构与哈希检查照常执行',
-    '  --collection-name <名称>    合集名称,默认取合集目录名;同时决定证书文件名 certs/<合集 id>-eec.crt',
+    '  --collection-name <名称>    合集名称,默认取合集目录名;同时决定证书所在文件夹与文件名 certs/<合集 id>/<合集 id>-eec.crt',
     '  --json                      以 JSON 输出校验结果',
     '  --help                      显示本说明',
     '',
     '环境变量:',
     '  ROOT_CA_PATH                根证书路径,等价于 --root-ca',
     '',
-    '终端签名证书按 certs/<合集 id>-eec.crt 读取,旧的根目录 eec.pem 仅作兼容回退。',
+    '终端签名证书按 certs/<合集 id>/<合集 id>-eec.crt、certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_、',
+    '根目录 eec.pem 的顺序读取;占位文件不是证书,须替换为真实证书后才能签名与验签。',
     '',
   ].join('\n'))
 }

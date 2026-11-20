@@ -70,9 +70,14 @@ plugins/
         plugin.js.author.sig
 ```
 
-合集根目录还需要 `certs/<合集 id>-eec.crt`(终端签名证书)、插件目录索引 `plugins.json`、`meta.json`、`tags.json`,以及 L1 清单 `manifest.json` 与 `manifest.json.sig`。合集的可信性由终端签名证书的证书链证明,不另发信任签名。
+合集根目录还需要 `certs/<合集 id>/<合集 id>-eec.crt`(终端签名证书,放在与合集 id 同名的来源文件夹里)、插件目录索引 `plugins.json`、`meta.json`、`tags.json`,以及 L1 清单 `manifest.json` 与 `manifest.json.sig`。合集的可信性由终端签名证书的证书链证明,不另发信任签名。
 
 终端签名证书的解析顺序:
 
-1. `certs/<合集 id>-eec.crt` —— 现行布局,新证书一律放这里。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,不写死任何具体合集名。
-2. `eec.pem` —— 旧布局回退,仅为兼容尚未迁移的旧合集保留,新合集不得使用,该回退在后续版本删除。命中旧布局时 `pnpm verify` 与 `pnpm build` 都会报 `EEC_LEGACY_LAYOUT` 提示,并给出应改成的文件名。
+1. `certs/<合集 id>/<合集 id>-eec.crt` —— 现行布局,真实证书一律放这里,文件夹名与文件名都取合集 id。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,不写死任何具体合集名。
+2. `certs/<合集 id>/_REPLACE_THIS_FILE_AS_YOUR_EEC_` —— 骨架占位文件,表示该位置尚未换成证书。它不是证书:解析结果 `layout` 为 `placeholder`、`isPlaceholder` 为 `true`,`pnpm build --sign` 拒绝签名,`pnpm verify` 报 `EEC_PLACEHOLDER` 提示替换,不会把它当证书解析。
+3. `eec.pem` —— 旧布局回退,仅为兼容尚未迁移的旧合集保留,新合集不得使用,该回退在后续版本删除。命中旧布局时 `pnpm verify` 与 `pnpm build` 都会报 `EEC_LEGACY_LAYOUT` 提示,并给出应改成的路径。
+
+占位文件在合集骨架里叫 `certs/template/_REPLACE_THIS_FILE_AS_YOUR_EEC_`,替换步骤是:把 `certs/template/` 改名为 `certs/<合集 id>/`,从组织离线密钥库取出该合集的终端签名证书放到 `certs/<合集 id>/<合集 id>-eec.crt`,再删除占位文件。真实证书就位而占位文件仍在时,`pnpm verify` 报 `EEC_PLACEHOLDER_LEFT` 提醒删除,因为 `pnpm build` 会把整个 `certs/` 复制进 `dist/`,残留的占位文件会一起被分发。
+
+不要在本仓库里试跑替换:把仓库复制到仓库内被忽略的 `temp/test-eec/` 作为临时测试仓库,在副本里替换占位文件、改合集 id 并跑校验,原仓库不受影响,完整流程见根目录 `README.md` 的「占位文件与测试流程」。
