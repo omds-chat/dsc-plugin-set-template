@@ -14,7 +14,7 @@
 |:---:|:---:|:---:|
 | `plugin_manifest.json` | 是 | 该作者的插件名数组,例如 `["dsc-demo"]` |
 | `author_pub.pem` | 否 | 作者公钥,OpenSSL PEM,Ed25519。版本目录出现 `<文件>.author.sig` 时必须存在 |
-| `manifest.json` | 是 | L2 清单,覆盖本目录的 `author_pub.pem` 与 `plugin_manifest.json` |
+| `manifest.json` | 是 | L2 清单,覆盖本目录的 `author_pub.pem` 与 `plugin_manifest.json`;由构建生成,并持久化到归档分支,不提交进主分支 |
 | `manifest.json.sig` | 是 | L2 清单的 CMS 分离签名,由 EEC 生成 |
 
 ## 插件目录
