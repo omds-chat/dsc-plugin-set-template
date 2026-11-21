@@ -1,5 +1,5 @@
 {
-  "name": "awesome-dsc-plugin-set-template",
+  "name": "dsc-plugin-set-template",
   "version": "0.2.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/omds-chat/awesome-dsc-plugin-set-template.git"
+    "url": "git+https://github.com/omds-chat/dsc-plugin-set-template.git"
   },
   "engines": {
     "node": ">=20"

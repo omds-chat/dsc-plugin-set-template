@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omds-chat.github.io/awesome-dsc-plugin-set-template/schemas/collection-meta.schema.json",
+  "$id": "https://omds-chat.github.io/dsc-plugin-set-template/schemas/collection-meta.schema.json",
   "title": "dsc-plugin-collection-meta",
   "description": "插件合集根目录的 meta.json,声明下载计数服务的开关、接口地址与 IP 上报策略。合集根必需文件,由 L1 清单覆盖。字段名全大写,与 scripts/lib/collection-verify.mjs 逐字对应。",
   "type": "object",

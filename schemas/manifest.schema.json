@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omds-chat.github.io/awesome-dsc-plugin-set-template/schemas/manifest.schema.json",
+  "$id": "https://omds-chat.github.io/dsc-plugin-set-template/schemas/manifest.schema.json",
   "title": "dsc-plugin-collection-manifest",
   "description": "合集三层哈希清单。L1 在合集根、L2 在每个作者目录、L3 在每个插件目录,每层一份 manifest.json 与一份 manifest.json.sig,层与层之间互不引用。path 相对清单所在目录,使用正斜杠。",
   "type": "object",

@@ -1,4 +1,4 @@
-# awesome-dsc-plugin-set-template
+# dsc-plugin-set-template
 
 A template for plugin collections in the dsc ecosystem. Copy this repository and you get a collection that follows distribution specification v2: the directory skeleton, JSON Schemas, OpenSSL PKI signing tools and a consistency checker are all included.
 
@@ -312,7 +312,7 @@ The scripts here are a strict pre-release gate: apart from the flags above, any 
 
 ### Why the template repository does not publish
 
-This repository carries the contract; it is not a collection. It holds no EEC private key, no root certificate and no publishable `dist/`. Running a release the way a collection does would fail while resolving the root certificate or while signing, and would produce nothing usable. The workflow therefore guards every publication-related step with a repository check: `if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'`.
+This repository carries the contract; it is not a collection. It holds no EEC private key, no root certificate and no publishable `dist/`. Running a release the way a collection does would fail while resolving the root certificate or while signing, and would produce nothing usable. The workflow therefore guards every publication-related step with a repository check: `if: github.repository != 'omds-chat/dsc-plugin-set-template'`.
 
 | Step | Behaviour in the template repository | Guarded |
 |:---:|:---:|:---:|

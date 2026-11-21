@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omds-chat.github.io/awesome-dsc-plugin-set-template/schemas/versions.schema.json",
+  "$id": "https://omds-chat.github.io/dsc-plugin-set-template/schemas/versions.schema.json",
   "title": "dsc-plugin-collection-versions",
   "description": "插件合集 plugins/<作者>/<插件>/versions.json,该插件的版本列表,由 L3 清单覆盖。latest 必须出现在 versions 内;versions 按版本号降序排列且不得重复。每个版本号对应同目录下一个同名目录,目录内有 meta.json、plugin.js 与 plugin.js.sig。",
   "type": "object",

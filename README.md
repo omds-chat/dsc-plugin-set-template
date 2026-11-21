@@ -1,4 +1,4 @@
-# awesome-dsc-plugin-set-template
+# dsc-plugin-set-template
 
 dsc 生态的插件合集模板。照抄本仓库,可以快速得到一个符合分发规范 v2 的插件合集:目录骨架、JSON Schema、基于 OpenSSL PKI 的签名工具与自洽性校验脚本都在这里。
 
@@ -312,7 +312,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 ### 为什么模板仓库不发布
 
-本仓库是契约载体,不是合集:没有 EEC 私钥,没有根证书,也没有可发布的 `dist/`。按使用方的方式跑一遍发布,只会在解析根证书或签名处失败,产不出任何可用产物。工作流因此把发布相关的每一步都挂上仓库判断:`if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'`。
+本仓库是契约载体,不是合集:没有 EEC 私钥,没有根证书,也没有可发布的 `dist/`。按使用方的方式跑一遍发布,只会在解析根证书或签名处失败,产不出任何可用产物。工作流因此把发布相关的每一步都挂上仓库判断:`if: github.repository != 'omds-chat/dsc-plugin-set-template'`。
 
 | 步骤 | 模板仓库里的行为 | 带仓库判断 |
 |:---:|:---:|:---:|

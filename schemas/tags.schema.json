@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omds-chat.github.io/awesome-dsc-plugin-set-template/schemas/tags.schema.json",
+  "$id": "https://omds-chat.github.io/dsc-plugin-set-template/schemas/tags.schema.json",
   "title": "dsc-plugin-collection-tags",
   "description": "插件合集根目录的 tags.json,预设标签列表。可选文件:存在时必须被 L1 清单覆盖,不存在则不要求也不进清单。插件目录索引 plugins.json 中每个插件的 tag 必须取自本文件。",
   "type": "array",

@@ -1,9 +1,9 @@
 name: build-and-deploy
 
 # 仓库判断:本工作流是插件合集模板的一部分,使用者会把整个骨架复制到自己的仓库。
-# 模板仓库 omds-chat/awesome-dsc-plugin-set-template 自身不保管 EEC 私钥与根证书,
+# 模板仓库 omds-chat/dsc-plugin-set-template 自身不保管 EEC 私钥与根证书,
 # 一旦按下面的触发条件跑起来,必然在解析根证书或签名步骤失败,也不会产出任何可用产物。
-# 因此凡是发布相关的步骤都带 if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template',
+# 因此凡是发布相关的步骤都带 if: github.repository != 'omds-chat/dsc-plugin-set-template',
 # 只在非模板仓库执行:使用者复制骨架到自己的仓库后,github.repository 就是新仓库的全名,
 # 条件自动成立,构建、签名与发布照常进行,无需改动本文件。
 
@@ -55,7 +55,7 @@ jobs:
       #   2. vars.ROOT_CA_URL     根证书下载地址,默认取 DeepSeek-Chat-Enhanced 的 certs 分支的 root_ca.crt
       #                           (该分支属于根 CA 仓库,不是本仓库的分支)。
       - name: Resolve root CA
-        if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
+        if: github.repository != 'omds-chat/dsc-plugin-set-template'
         env:
           ROOT_CA_PEM: ${{ secrets.ROOT_CA_PEM }}
           ROOT_CA_URL: ${{ vars.ROOT_CA_URL }}
@@ -79,7 +79,7 @@ jobs:
       # 先找 certs/<合集 id>/<合集 id>-eec.crt,占位文件不是证书直接失败,旧的根目录 eec.pem 仅作兼容回退,
       # 回退删除后本步骤无需改动。
       - name: Verify EEC against root CA
-        if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
+        if: github.repository != 'omds-chat/dsc-plugin-set-template'
         run: |
           set -euo pipefail
           eec="$(node -e "import('./scripts/pki.mjs').then((m) => { const r = m.resolveEecCertPath(process.cwd()); if (!r.exists) { console.error('找不到终端签名证书:' + r.candidates.map((c) => c.rel).join(' 或 ')); process.exit(1); } if (r.isPlaceholder) { console.error('终端签名证书仍是占位文件 ' + r.rel + ',请替换为 ' + r.candidates[0].rel); process.exit(1); } process.stdout.write(r.path); })")"
@@ -93,23 +93,23 @@ jobs:
       # 用 EEC 私钥为三层清单与每个版本的 plugin.js 生成 CMS 分离签名,并生成 dist/。
       # 私钥只从 secret 读取,且必须与合集内的终端签名证书配对,否则步骤直接失败。
       - name: Build distribution
-        if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
+        if: github.repository != 'omds-chat/dsc-plugin-set-template'
         env:
           EEC_SECRET_KEY: ${{ secrets.EEC_SECRET_KEY }}
         run: node scripts/build-collection.mjs --dir . --root-ca "$ROOT_CA_PATH" --sign --out dist
 
       # 对即将分发的产物再做一次完整校验:证书链、CMS 签名、作者签名、清单与版本目录。
       - name: Verify distribution
-        if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
+        if: github.repository != 'omds-chat/dsc-plugin-set-template'
         run: node scripts/verify-collection.mjs --dir dist --root-ca "$ROOT_CA_PATH"
 
       # 产物与 Pages 配置同样只在非模板仓库生成:模板仓库没有 dist/,也没有可发布的合集。
       - name: Configure Pages
-        if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
+        if: github.repository != 'omds-chat/dsc-plugin-set-template'
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
-        if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
+        if: github.repository != 'omds-chat/dsc-plugin-set-template'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -117,7 +117,7 @@ jobs:
   deploy:
     needs: build
     # 发布 Page 的最后一道判断:模板仓库不部署;非模板仓库照常部署。
-    if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
+    if: github.repository != 'omds-chat/dsc-plugin-set-template'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
