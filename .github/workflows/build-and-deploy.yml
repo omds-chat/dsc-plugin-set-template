@@ -52,7 +52,8 @@ jobs:
       # 模板仓库都没有,所以逐个加 if 跳过;非模板仓库照常执行。
       # 根证书二选一,优先级从高到低:
       #   1. secrets.ROOT_CA_PEM  根证书 PEM 文本,适合不便公开拉取的场景;
-      #   2. vars.ROOT_CA_URL     根证书下载地址,默认取 online-data 分支的 root_ca.crt。
+      #   2. vars.ROOT_CA_URL     根证书下载地址,默认取 DeepSeek-Chat-Enhanced 的 certs 分支的 root_ca.crt
+      #                           (该分支属于根 CA 仓库,不是本仓库的分支)。
       - name: Resolve root CA
         if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'
         env:

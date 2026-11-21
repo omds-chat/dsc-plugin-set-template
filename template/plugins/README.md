@@ -14,7 +14,7 @@
 |:---:|:---:|:---:|
 | `plugin_manifest.json` | 是 | 该作者的插件名数组,例如 `["dsc-demo"]` |
 | `author_pub.pem` | 否 | 作者公钥,OpenSSL PEM,Ed25519。版本目录出现 `<文件>.author.sig` 时必须存在 |
-| `manifest.json` | 是 | L2 清单,覆盖本目录的 `author_pub.pem` 与 `plugin_manifest.json`;由构建生成,并持久化到归档分支,不提交进主分支 |
+| `manifest.json` | 是 | L2 清单,覆盖本目录的 `author_pub.pem` 与 `plugin_manifest.json`;由构建生成,持久化在合集仓库自己的 `ci-memory` 分支的 `layer-manifests/` 下,不提交进主分支 |
 | `manifest.json.sig` | 是 | L2 清单的 CMS 分离签名,由 EEC 生成 |
 
 ## 插件目录
@@ -33,7 +33,7 @@
 ```
 
 - `latest` 必须出现在 `versions` 内;`versions` 按版本号降序排列且不得重复。
-- 目录内另有 `manifest.json` 与 `manifest.json.sig`,即 L3 清单,覆盖 `versions.json` 与每个版本的 `meta.json`。L3 不覆盖 `plugin.js` 与 `plugin.js.sig`,产物本体由每版本的 `plugin.js.sig` 独立签名。
+- 目录内另有 `manifest.json` 与 `manifest.json.sig`,即 L3 清单,覆盖 `versions.json` 与每个版本的 `meta.json`。L3 不覆盖 `plugin.js` 与 `plugin.js.sig`,产物本体由每版本的 `plugin.js.sig` 独立签名。L3 与 L1、L2 一样落在 `ci-memory` 的 `layer-manifests/` 下,不提交进主分支。
 
 ## 版本目录
 
@@ -81,3 +81,17 @@ plugins/
 占位文件在合集骨架里叫 `certs/template/_REPLACE_THIS_FILE_AS_YOUR_EEC_`,替换步骤是:把 `certs/template/` 改名为 `certs/<合集 id>/`,从组织离线密钥库取出该合集的终端签名证书放到 `certs/<合集 id>/<合集 id>-eec.crt`,再删除占位文件。真实证书就位而占位文件仍在时,`pnpm verify` 报 `EEC_PLACEHOLDER_LEFT` 提醒删除,因为 `pnpm build` 会把整个 `certs/` 复制进 `dist/`,残留的占位文件会一起被分发。
 
 不要在本仓库里试跑替换:把仓库复制到仓库内被忽略的 `temp/test-eec/` 作为临时测试仓库,在副本里替换占位文件、改合集 id 并跑校验,原仓库不受影响,完整流程见根目录 `README.md` 的「占位文件与测试流程」。
+
+## 清单空基线与 ci-memory
+
+骨架只带一份清单空基线,不带账本:三层清单要跨构建延续 revision,真实合集的清单放在合集仓库自己的并行分支 `ci-memory` 里。
+
+| 位置 | 内容 | 说明 |
+|:---:|:---:|:---:|
+| `template/manifest.json` | L1 清单的空基线 | 首次构建前的占位:`revision` 为 1,只覆盖根目录的 `meta.json`、`plugins.json`、`tags.json` 与 `plugins/author_manifest.json`,不含任何跨构建历史 |
+| 合集仓库的 `ci-memory` 分支 | `layer-manifests/` 下按分发路径镜像的三层 `manifest.json` 与 `manifest.json.sig` | 由流水线读回与写回,不进主分支,不发布到 Pages |
+
+- 空基线不是账本副本,也不是某次构建的产物:它只表达「空合集那一刻」的清单形状,`pnpm build` 会按当时的内容重新生成它。
+- 构建读不到 `ci-memory` 里该层清单时,revision 从 1 起算:工作树里的上一版就是这份空基线,复制后没改过内容就沿用 1,改过内容则在 1 的基础上加一。前提是分支已经建好:分支缺失属于部署问题,流水线报错中止,不代为创建;从 1 起算只针对分支已建、`layer-manifests/` 里还没有该层清单的第一次构建。账本接上以后,主分支不再提交后续清单。
+- 骨架自己不带这条分支:模板仓库不建 `ci-memory`,也不持有账本,只发布规范与 Schema。合集仓库要自己建:用 `git checkout --orphan ci-memory` 建立,首提交只放一个说明职责的 `README.md`,再在仓库根下的 `single-branch/ci-memory/` 检出为独立工作区(`.gitignore` 已忽略该目录)。
+- 账本已存在却读回失败属于另一类问题:不退回 1,按 [`docs/design/collection-contract.md`](../../docs/design/collection-contract.md) 的 6.3 与 8.5 中止本次发布。

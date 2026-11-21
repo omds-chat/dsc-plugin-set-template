@@ -6,7 +6,7 @@
  * 再生成三层哈希清单(L1 合集根、L2 作者目录、L3 插件目录)并逐层签名,
  * 然后校验合集,校验不通过则以非零退出码结束并列出全部问题;
  * 校验通过后把根目录元数据、三层清单、certs/ 目录与 plugins/ 目录复制到输出目录,
- * 并写入 build-info.json 作为分发索引。根证书不进 dist,由 online-data 分发。
+ * 并写入 build-info.json 作为分发索引。根证书不进 dist,由 DeepSeek-Chat-Enhanced 的 certs 分支分发。
  *
  * revision 语义:该层文件集合与哈希都没变时沿用旧 revision,有变化时加一,
  * 没有旧清单时从 1 开始。旧清单从该层目录现有的 manifest.json 读取。

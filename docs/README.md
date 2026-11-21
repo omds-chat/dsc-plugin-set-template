@@ -6,12 +6,12 @@
 
 | 文档 | 职责一句话 | 主要内容 | 什么时候需要读 | 主要读者 |
 |:---:|:---:|:---:|:---:|:---:|
-| [README.md](../README.md) | 合集模板的中文主入口:把一个合集从零做到可分发的全流程 | 目录结构、创建步骤、证书与签名命令、校验规则、签名工具接口、部署流程、安全提示 | 要新建合集、要签一次名,或要弄清某条校验为什么失败时 | 用户、贡献者、Agent |
+| [README.md](../README.md) | 合集模板的中文主入口:把一个合集从零做到可分发的全流程 | 目录结构、创建步骤、证书与签名命令、校验规则、签名工具接口、部署流程、模板仓库为何不发布、安全提示 | 要新建合集、要签一次名,或要弄清某条校验为什么失败时 | 用户、贡献者、Agent |
 | [README.en-US.md](../README.en-US.md) | 主 README 的英文版,与中文版逐节对应 | 与中文版相同的章节 | 读者使用英文,或要把同一套说明交给英文读者时 | 用户、贡献者 |
 | [docs/README.md](README.md) | 本索引:全部文档的职责、优先级、分层与维护约定 | 文档主表、冲突裁决顺序、文档分层、维护约定 | 第一次接触本仓库,或不确定该读哪份文档时 | Agent、用户、贡献者、维护者 |
-| [docs/design/collection-contract.md](design/collection-contract.md) | 设计文档:骨架、合集 id、证书解析、构建与校验分工、清单持久化的取舍与边界 | 各章节的已定边界、代价与已排除项,以及尚未定稿的条目 | 要判断"为什么这样定"、要改脚本语义,或要决定某条边界能不能越时 | 维护者、Agent |
+| [docs/design/collection-contract.md](design/collection-contract.md) | 设计文档:骨架(含清单空基线)、合集 id、证书解析、构建与校验分工、清单持久化与并行分支 `ci-memory` 的取舍与边界 | 各章节的已定边界、代价与已排除项,并行分支 `ci-memory` 与 `certs`、`trusted-manifest` 的分工,以及尚未定稿的条目 | 要判断"为什么这样定"、要改脚本语义,或要决定某条边界能不能越时 | 维护者、Agent |
 | [schemas/README.md](../schemas/README.md) | Schema 索引:每份 JSON 由哪个脚本生成、由哪条规则校验 | Schema 与 JSON 的对照表、脚本与 Schema 的同步规则、Schema 表达不了的约束、命名与引用约定 | 要新增或修改 JSON 字段、要让 Schema 与脚本同步,或要查某条正则写在哪里时 | 维护者、贡献者、Agent |
-| [template/plugins/README.md](../template/plugins/README.md) | 骨架里 plugins/ 目录的三层布局与每层必需文件 | 作者目录、插件目录、版本目录的命名与必需文件,三层清单的覆盖范围,证书解析顺序与占位文件替换步骤 | 要往合集里加作者、加插件、加版本,或要确认某个文件该放哪一层时 | 贡献者、Agent、用户 |
+| [template/plugins/README.md](../template/plugins/README.md) | 骨架里 plugins/ 目录的三层布局、每层必需文件与清单空基线 | 作者目录、插件目录、版本目录的命名与必需文件,三层清单的覆盖范围与持久化落点,骨架的清单空基线与 `ci-memory` 约定,证书解析顺序与占位文件替换步骤 | 要往合集里加作者、加插件、加版本,或要确认某个文件该放哪一层时 | 贡献者、Agent、用户 |
 
 法律文件 `LICENSE` 与 `COPYRIGHT` 不属于文档,不在本索引范围内。
 
@@ -43,7 +43,7 @@
 ## 4. 维护约定
 
 - 新增或删除文档时,当轮更新第 1 节主表:一行一份文档,职责一句话,不复述正文。改名或移动文档时,同时改本索引与所有入链。
-- 机制变更当轮更新对应文档,不留到下一轮:改校验规则要同改 [schemas/README.md](../schemas/README.md) 的对照表与根 README 的校验规则表;改骨架布局要同改 [template/plugins/README.md](../template/plugins/README.md) 与设计文档第 2 节;改清单持久化要同改设计文档第 6 节与本索引里的职责句。
+- 机制变更当轮更新对应文档,不留到下一轮:改校验规则要同改 [schemas/README.md](../schemas/README.md) 的对照表与根 README 的校验规则表;改骨架布局要同改 [template/plugins/README.md](../template/plugins/README.md) 与设计文档第 2 节;改清单持久化要同改设计文档第 6 节与本索引里的职责句;并行分支的名字与内部文件夹以组织规范 `.github/docs/repo-spec/side-branches.md` 为准,改分支名时同改设计文档第 2 节与第 6 节、两份 README、[template/plugins/README.md](../template/plugins/README.md) 与本索引,不留旧名作别名。
 - 设计文档第 8 节的未定稿条目定下来之后,把结论写进对应正文并从第 8 节删掉该条,同时把结论落到 README 与 Schema 里;未定稿只记未定的事,不记决定过程。
 - 本索引只描述文档的职责与位置,不写时间戳、不写进度、不复制正文;正文改动导致某行职责句不再成立时,当轮改本索引。
 - 新增文档前先判断它属于第 3 节的哪一层;归不进任何一层的临时说明不新建文档,写进已有文档的对应小节。

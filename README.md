@@ -56,10 +56,10 @@ dsc 生态的插件合集模板。照抄本仓库,可以快速得到一个符合
     ├── meta.json
     ├── plugins.json
     ├── tags.json
-    ├── manifest.json                       L1 清单占位,由 pnpm build 重新生成
+    ├── manifest.json                       L1 清单的空基线(首次构建前),由 pnpm build 重新生成
     └── plugins/
         ├── author_manifest.json
-        └── README.md                       三层目录与必需文件
+        └── README.md                       三层目录、必需文件与清单空基线
 ```
 
 ## 用本模板创建一个合集
@@ -74,10 +74,11 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omds-chat/CN=<合集
 ```
 
 4. 把 `eec.csr` 交给根 CA(`DeepSeek-Chat-Enhanced` 仓库)签发,拿回证书后写到 `certs/<合集 id>/<合集 id>-eec.crt`。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,新建合集通常就是仓库目录名。骨架里的 `certs/template/` 与新的合集 id 不同名,复制后要改名为 `certs/<新合集 id>/`;文件夹里的 `_REPLACE_THIS_FILE_AS_YOUR_EEC_` 是占位文件而不是证书,必须把它换成 `certs/<新合集 id>/<新合集 id>-eec.crt` 并删除占位文件。占位文件只用来占位:签名与验签都拒绝它,详见[占位文件与测试流程](#占位文件与测试流程)。
-5. 把 `eec_secret.pem` 放进 CI secret `EEC_SECRET_KEY`;把根证书放进 `secrets.ROOT_CA_PEM`,或把 `DeepSeek-Chat-Enhanced` 的 `online-data` 分支上的根证书地址放进 `vars.ROOT_CA_URL`。私钥不得入库。
+5. 把 `eec_secret.pem` 放进 CI secret `EEC_SECRET_KEY`;把根证书放进 `secrets.ROOT_CA_PEM`,或把根证书地址放进 `vars.ROOT_CA_URL`,该地址取 `DeepSeek-Chat-Enhanced` 的 `certs` 分支上的 `root_ca.crt`——这条分支属于根 CA 仓库,不是本仓库的分支。私钥不得入库。
 6. 编辑 `meta.json`:默认关闭下载计数。若要启用,把 `DOWNLOAD_COUNT_ENABLE` 置为 `true`,并同时给出 `DOWNLOAD_COUNT_API` 与 `API_NEED_IP`。
 7. 在 `plugins/` 下建立作者目录与插件目录,命名规则与必需文件见 `template/plugins/README.md`;在插件目录索引 `plugins.json` 登记插件,在 `tags.json` 声明预设标签,在 `plugins/author_manifest.json` 登记作者。
 8. 在 `.github/plugins-sources.json` 中登记插件来源,运行 `pnpm import` 收录插件,再运行 `pnpm verify` 确认自洽,最后运行 `pnpm build` 生成 `dist/`。
+9. 为三层清单建一条并行分支 `ci-memory`(做法见[并行分支](#并行分支)):用 `git checkout --orphan ci-memory` 建立,首提交只放一个说明职责的 `README.md`,工作区检出在 `single-branch/ci-memory/`;它与 `main` 无公共祖先,只给流水线读写,不发布到 Pages。模板仓库本身不建这条分支,骨架里的 `template/manifest.json` 只是首次构建前的空基线。
 
 ## 占位文件与测试流程
 
@@ -240,7 +241,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 
 三层之间不做收束:L1 不引用 L2,L2 不引用 L3,任何一层都可以单独发布、单独校验、单独重签。取舍是放弃「一次校验拿到全树摘要」,换取按插件增量更新:改一个插件只需 L3 的 `revision` 加一,L2 与 L1 的 `revision` 不变,客户端也只重新拉取这一层的清单与签名。若把三层收束成一份根清单,任何插件发版都会改动根清单,所有客户端都得重拉整份摘要。
 
-合集的可信性由「根 CA 签发的 EEC」证书链证明,不另发信任签名;根证书不进 `dist/`,由 `DeepSeek-Chat-Enhanced` 的 `online-data` 分支分发,网页用内嵌的根证书指纹核对。
+合集的可信性由「根 CA 签发的 EEC」证书链证明,不另发信任签名;根证书不进 `dist/`,由 `DeepSeek-Chat-Enhanced` 的 `certs` 分支分发,信任清单由同仓库的 `trusted-manifest` 分支分发,网页用内嵌的根证书指纹核对。这两条分支都属于 `DeepSeek-Chat-Enhanced`:既不是本仓库的分支,也不是使用方合集仓库的分支,合集的并行分支不用这两个名字。
 
 ## 签名与校验
 
@@ -271,8 +272,8 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 | 9 | 覆盖范围与该层应有的文件严格相等:该有的都在清单里,清单里没有多余项,L3 不得出现 `plugin.js` 与 `plugin.js.sig` |
 | 10 | 清单记录的每个 SHA-512 与文件实际内容一致,不一致时报出层号与具体文件 |
 | 11 | 每层 `manifest.json.sig` 用根证书与终端签名证书验签,失败即报错 |
-| 12 | 作者目录名、`plugins.json` 的 `author` 与 `plugins/author_manifest.json` 的 `username` 都必须是合法的 GitHub 用户名,正则 `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`,不区分大小写,长度上限 39,不得以连字符开头或结尾。目录名不符报 `AUTHOR_DIR_NAME_INVALID` 并指出 `plugins/<目录>`;`author` 与 `username` 不符分别报 `PLUGINS_INDEX_INVALID`、`AUTHOR_MANIFEST_INVALID` |
-| 13 | 插件名必须带 `dsc-` 前缀。`plugins.json` 的 `plugin_name` 与 `plugins/<作者>/plugin_manifest.json` 的每一项都按 `PLUGIN_NAME_PATTERN` 校验,即 `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`,缺前缀报 `PLUGINS_INDEX_INVALID` 或 `PLUGIN_MANIFEST_INVALID` |
+| 12 | 作者目录名、`plugins.json` 的 `author` 与 `plugins/author_manifest.json` 的 `username` 都必须是合法的 GitHub 用户名,正则 `^[a-z\d](?:[a-z\d]\|-(?=[a-z\d])){0,38}$`,不区分大小写,长度上限 39,不得以连字符开头或结尾。目录名不符报 `AUTHOR_DIR_NAME_INVALID` 并指出 `plugins/<目录>`;`author` 与 `username` 不符分别报 `PLUGINS_INDEX_INVALID`、`AUTHOR_MANIFEST_INVALID` |
+| 13 | 插件名必须带 `dsc-` 前缀。`plugins.json` 的 `plugin_name` 与 `plugins/<作者>/plugin_manifest.json` 的每一项都按 `PLUGIN_NAME_PATTERN` 校验,即 `^(?:dsc-[a-z0-9][a-z0-9._-]*\|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`,缺前缀报 `PLUGINS_INDEX_INVALID` 或 `PLUGIN_MANIFEST_INVALID` |
 
 `pnpm verify` 默认带 `--allow-placeholder-eec`,用于骨架自身:终端签名证书仍是占位文件、根证书缺失、终端签名证书未由根 CA 签发、三层清单或清单签名尚未生成时降级为警告。占位文件只在骨架模式下降级,它始终不会被当成证书解析;真实合集的 CI 不带这个开关,占位文件没换掉就是错误。`--allow-missing-manifest` 只放开清单与清单签名缺失,结构与哈希检查照常执行。
 
@@ -303,11 +304,49 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 ## 校验与部署流程
 
 - 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 先补齐三层清单,再校验,最后把分发内容写入 `dist/`;带 `--sign` 时用 `EEC_SECRET_KEY` 为三层清单与每个版本的 `plugin.js` 生成签名。
-- 三层 `manifest.json` 与 `manifest.json.sig` 必须持久化,但落点不是主分支。revision 从该层上一份清单读出,读不回来就只能从 1 重新开始,跨 CI 的 revision 沿用随之失效;所以清单提交进与主分支无公共祖先的归档分支,主分支的提交里不留同一层的清单副本。流水线按「读回、生成、写回」三步走:先从本仓库的 `online-data` 归档分支读回该层上一版清单,再生成新的清单与签名,最后把这两份新产物写回归档分支。归档分支名为 `online-data`,写回失败即中止本次发布并让 CI 报错,不带着旧账本继续发;取舍、边界与三步顺序见 [`docs/design/collection-contract.md`](docs/design/collection-contract.md) 第 6 节。
+- 三层 `manifest.json` 与 `manifest.json.sig` 必须持久化,但落点不是主分支。revision 从该层上一份清单读出,读不回来就只能从 1 重新开始,跨 CI 的 revision 沿用随之失效;所以清单提交进与主分支无公共祖先的归档分支,主分支的提交里不留同一层的清单副本。流水线按「读回、生成、写回」三步走:先从合集仓库自己的 `ci-memory` 分支的 `layer-manifests/` 读回该层上一版清单,再生成新的清单与签名,最后把这两份新产物写回 `ci-memory/layer-manifests/` 的对应路径。归档分支按组织规范命名为 `ci-memory`,内部按功用分扁平文件夹,本场景只有 `layer-manifests/`;它不发布到 Pages,只给流水线读写。写回失败即中止本次发布并让 CI 报错,不带着旧账本继续发;取舍、边界与三步顺序见 [`docs/design/collection-contract.md`](docs/design/collection-contract.md) 第 6 节。
 - 自动化:推送到 main 或手动触发 `build-and-deploy`,依次安装依赖、按清单收录插件、解析根证书、用 `openssl verify` 校验终端签名证书的证书链、用 `EEC_SECRET_KEY` 签名并构建 `dist/`、对 `dist/` 再跑一次完整校验,最后发布到 Pages。
-- 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 `DeepSeek-Chat-Enhanced` 的 `online-data` 分支拉取。
+- 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 `DeepSeek-Chat-Enhanced` 的 `certs` 分支拉取;信任清单由该仓库的 `trusted-manifest` 分支分发。两条分支都属于根 CA 仓库,不是本仓库的分支。
 - 签名私钥只从 secrets 读取,仓库内不存放任何私钥。
 - 分发必须开启跨域访问,至少放行 `omds-chat.github.io`。
+
+### 为什么模板仓库不发布
+
+本仓库是契约载体,不是合集:没有 EEC 私钥,没有根证书,也没有可发布的 `dist/`。按使用方的方式跑一遍发布,只会在解析根证书或签名处失败,产不出任何可用产物。工作流因此把发布相关的每一步都挂上仓库判断:`if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'`。
+
+| 步骤 | 模板仓库里的行为 | 带仓库判断 |
+|:---:|:---:|:---:|
+| Checkout、Setup pnpm、Setup Node.js、Install dependencies | 照常执行 | 否 |
+| Import plugins | 照常执行;来源清单为空时脚本直接返回 0 | 否 |
+| Resolve root CA | 跳过 | 是 |
+| Verify EEC against root CA | 跳过 | 是 |
+| Build distribution | 跳过 | 是 |
+| Verify distribution | 跳过 | 是 |
+| Configure Pages、Upload artifact | 跳过 | 是 |
+| `deploy` 作业(Deploy to GitHub Pages) | 整个作业跳过 | 是 |
+
+- 跳过发生在步骤级,而不是失败后重试:模板仓库的这次运行里没有任何需要根证书或签名私钥的动作,不会因为缺 secret 而报错。
+- 判断按仓库全名比较。复制骨架到新仓库后,`github.repository` 就是新仓库的全名,条件自动成立,构建、签名与发布照常进行,不需要改工作流。
+- 组织或仓库改名时这个字面量必须同步改,否则模板仓库会被当成普通合集,回到「必然失败」的状态。
+- 模板仓库也不建 `ci-memory`,不持有账本:本仓库的工作流没有清单读回与写回的步骤,这部分只存在于合集的流水线里,所以这里没有可跳过的东西。
+
+### 并行分支
+
+三层清单要跨构建延续 revision,落点在一条与 `main` 无公共祖先的并行分支上。分支名与内部布局以组织规范 `.github/docs/repo-spec/side-branches.md` 为准,三条并行分支的分工是固定的:
+
+| 分支 | 属于哪个仓库 | 放什么 | 进 Pages | 谁读 |
+|:---:|:---:|:---:|:---:|:---:|
+| `ci-memory` | 使用方合集仓库,模板仓库不建 | `layer-manifests/` 下按分发路径镜像的三层 `manifest.json` 与 `manifest.json.sig` | 否 | 只有流水线 |
+| `certs` | `DeepSeek-Chat-Enhanced` | 根证书与可公开的证书、公钥 | 是 | 网页与合集在运行时 |
+| `trusted-manifest` | `DeepSeek-Chat-Enhanced` | 信任清单及其索引所需的派生数据 | 是 | 网页与合集在启动时 |
+
+- 使用方仓库自己建 `ci-memory`:用 `git checkout --orphan ci-memory` 建立,首提交只放一个说明职责的 `README.md`,再在仓库根下的 `single-branch/ci-memory/` 检出为独立工作区;该目录已在 `.gitignore` 里忽略。
+- 分支内按功用分扁平文件夹,不再往下分层;本场景只有 `layer-manifests/`,其中按与分发目录相同的路径镜像每层的清单与签名。
+- 骨架里的 `template/manifest.json` 是「首次构建前的空基线」:`revision` 为 1,只覆盖根目录四份文件,不含跨构建历史;它不是账本副本,`pnpm build` 会按当时的内容重新生成它。
+- 构建读不到 `ci-memory` 里该层清单时,revision 从 1 起算:工作树里的上一版就是骨架的空基线,复制后没改过内容就沿用 1,改过内容则在 1 的基础上加一。分支本身仍须先建好:分支缺失属于部署问题,流水线报错中止;从 1 起算只针对分支已建、`layer-manifests/` 里还没有该层清单的第一次构建。账本接上以后,主分支不再提交后续清单。
+- `ci-memory` 不发布到 Pages,只给流水线读写:合集仓库的流水线从它读回上一版清单、把本轮产物写回它,客户端不从它取任何内容。
+- 模板仓库本身不建这条分支,也不持有任何账本:它只发布规范与 Schema。流水线发现 `ci-memory` 缺失时报错中止,不代为创建。
+- 根证书与信任清单不在 `ci-memory` 里,它们来自 `DeepSeek-Chat-Enhanced` 的 `certs` 与 `trusted-manifest` 分支,不是本仓库的分支;三个名字互不代管,也不共用同一个分支。
 
 ## 安全提示
 

@@ -56,10 +56,10 @@ This repository is not a plugin collection. It ships the skeleton and the specif
     ├── meta.json
     ├── plugins.json
     ├── tags.json
-    ├── manifest.json                       placeholder L1 manifest, rewritten by pnpm build
+    ├── manifest.json                       empty L1 baseline before the first build, rewritten by pnpm build
     └── plugins/
         ├── author_manifest.json
-        └── README.md                       three-layer layout and required files
+        └── README.md                       three-layer layout, required files and the manifest baseline
 ```
 
 ## Create a collection from this template
@@ -74,10 +74,11 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omds-chat/CN=<collec
 ```
 
 4. Hand `eec.csr` to the root CA (the `DeepSeek-Chat-Enhanced` repository) and write the issued certificate to `certs/<collection id>/<collection id>-eec.crt`. The collection id comes from `--collection-name`, otherwise from the `collection` field of `build-info.json` in a distribution directory, otherwise from the collection directory name, which for a new collection is normally its repository name. The skeleton ships `certs/template/`, which does not match a new collection id, so rename it to `certs/<new collection id>/` after copying. `_REPLACE_THIS_FILE_AS_YOUR_EEC_` inside that folder is a placeholder file, not a certificate: replace it with `certs/<new collection id>/<new collection id>-eec.crt` and delete the placeholder. Both signing and verification reject the placeholder; see [Placeholder file and test flow](#placeholder-file-and-test-flow).
-5. Put `eec_secret.pem` into the CI secret `EEC_SECRET_KEY`. Put the root certificate into `secrets.ROOT_CA_PEM`, or put the root certificate URL on the `online-data` branch of `DeepSeek-Chat-Enhanced` into `vars.ROOT_CA_URL`. Never commit a private key.
+5. Put `eec_secret.pem` into the CI secret `EEC_SECRET_KEY`. Put the root certificate into `secrets.ROOT_CA_PEM`, or put its URL into `vars.ROOT_CA_URL`, pointing at `root_ca.crt` on the `certs` branch of `DeepSeek-Chat-Enhanced`; that branch belongs to the root CA repository, not to this one. Never commit a private key.
 6. Edit `meta.json`. Download counting is off by default. To enable it, set `DOWNLOAD_COUNT_ENABLE` to `true` and provide both `DOWNLOAD_COUNT_API` and `API_NEED_IP`.
 7. Create author and plugin directories under `plugins/`. Naming rules and required files are in `template/plugins/README.md`. Register plugins in the plugin directory index `plugins.json`, declare preset tags in `tags.json` and register authors in `plugins/author_manifest.json`.
 8. Register plugin sources in `.github/plugins-sources.json`, run `pnpm import` to import them, run `pnpm verify` to confirm consistency, then run `pnpm build` to produce `dist/`.
+9. Create a parallel branch `ci-memory` for the three-layer manifests (see [Parallel branches](#parallel-branches)): run `git checkout --orphan ci-memory`, put a single `README.md` that states its responsibility in the first commit, and check the worktree out under `single-branch/ci-memory/`. It shares no ancestry with `main`, is read and written by the pipeline only, and is never published to Pages. The template repository does not create this branch, and `template/manifest.json` in the skeleton is only the empty baseline before the first build.
 
 ## Placeholder file and test flow
 
@@ -240,7 +241,7 @@ Manifest format, with the JSON Schema in `schemas/manifest.schema.json`:
 
 The three layers are deliberately not folded together: L1 does not reference L2 and L2 does not reference L3, so each layer can be published, verified and re-signed on its own. The trade-off gives up "one check yields a digest of the whole tree" in exchange for per-plugin incremental updates: changing one plugin only increments the L3 `revision`, leaves L2 and L1 untouched, and clients refetch just that layer. Folding the layers into a single root manifest would make every plugin release rewrite the root manifest and force every client to refetch the whole digest.
 
-A collection is trusted because its EEC chains to the root CA, so no separate trust signature is issued. The root certificate is not part of `dist/`: it is distributed through the `online-data` branch of `DeepSeek-Chat-Enhanced` and pinned by fingerprint inside the web client.
+A collection is trusted because its EEC chains to the root CA, so no separate trust signature is issued. The root certificate is not part of `dist/`: it is distributed through the `certs` branch of `DeepSeek-Chat-Enhanced`, the trust list through the `trusted-manifest` branch of the same repository, and the web client pins the root certificate by fingerprint. Both branches belong to `DeepSeek-Chat-Enhanced`: they are neither branches of this repository nor of a consuming collection repository, and a collection does not reuse those names for its parallel branch.
 
 ## Signing and verification
 
@@ -271,8 +272,8 @@ The command is always `openssl cms -sign -binary -md sha512 -outform DER -nocert
 | 9 | Coverage matches the layer exactly: every required file is listed and nothing extra is, so L3 never lists `plugin.js` or `plugin.js.sig` |
 | 10 | Every recorded SHA-512 matches the file contents, and a mismatch names the layer and the file |
 | 11 | Every `manifest.json.sig` verifies against the root certificate and the end-entity certificate; a failure is an error |
-| 12 | Author directory names, `author` in `plugins.json` and `username` in `plugins/author_manifest.json` must all be valid GitHub usernames: `^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$`, case-insensitive, at most 39 characters, with no leading or trailing hyphen. A directory name that does not match reports `AUTHOR_DIR_NAME_INVALID` and names `plugins/<directory>`; a mismatched `author` or `username` reports `PLUGINS_INDEX_INVALID` or `AUTHOR_MANIFEST_INVALID` |
-| 13 | Plugin names must carry the `dsc-` prefix. `plugin_name` in `plugins.json` and every entry of `plugins/<author>/plugin_manifest.json` are checked against `PLUGIN_NAME_PATTERN`, that is `^(?:dsc-[a-z0-9][a-z0-9._-]*|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`; a missing prefix reports `PLUGINS_INDEX_INVALID` or `PLUGIN_MANIFEST_INVALID` |
+| 12 | Author directory names, `author` in `plugins.json` and `username` in `plugins/author_manifest.json` must all be valid GitHub usernames: `^[a-z\d](?:[a-z\d]\|-(?=[a-z\d])){0,38}$`, case-insensitive, at most 39 characters, with no leading or trailing hyphen. A directory name that does not match reports `AUTHOR_DIR_NAME_INVALID` and names `plugins/<directory>`; a mismatched `author` or `username` reports `PLUGINS_INDEX_INVALID` or `AUTHOR_MANIFEST_INVALID` |
+| 13 | Plugin names must carry the `dsc-` prefix. `plugin_name` in `plugins.json` and every entry of `plugins/<author>/plugin_manifest.json` are checked against `PLUGIN_NAME_PATTERN`, that is `^(?:dsc-[a-z0-9][a-z0-9._-]*\|@[a-z0-9][a-z0-9._-]*/dsc-[a-z0-9][a-z0-9._-]*)$`; a missing prefix reports `PLUGINS_INDEX_INVALID` or `PLUGIN_MANIFEST_INVALID` |
 
 `pnpm verify` passes `--allow-placeholder-eec` by default so the skeleton itself can be checked: an end-entity certificate that is still the placeholder file, a missing root certificate, an end-entity certificate that does not chain to it, or manifests and manifest signatures that do not exist yet become warnings. The placeholder is downgraded only in skeleton mode and is never parsed as a certificate; a real collection's CI does not pass that flag, so an unreplaced placeholder is an error there. `--allow-missing-manifest` relaxes only the missing-manifest and missing-signature errors while structure and hash checks still run.
 
@@ -303,11 +304,49 @@ The scripts here are a strict pre-release gate: apart from the flags above, any 
 ## Verification and deployment
 
 - Locally: run `pnpm install`, then `pnpm verify`. `pnpm build` first materialises the three manifests, then verifies, then writes distribution content to `dist/`; with `--sign` it signs the three manifests and every version's `plugin.js` with `EEC_SECRET_KEY`.
-- The three `manifest.json` and `manifest.json.sig` files must be persisted, but not on the main branch. A revision is read back from the previous manifest of the same layer; when it cannot be read back, the layer restarts at 1 and revision continuity across CI runs is lost. The manifests are therefore committed to an archive branch that shares no ancestry with the main branch, and no commit on the main branch carries a copy of them. The pipeline runs three steps in this order: read back, generate, write back. It first restores the previous manifest of each layer from the archive branch, then generates the new manifests and signatures, then writes both new artifacts back to the archive branch. The archive branch is named `online-data`; a write-back failure aborts the release and fails the CI run instead of publishing on a stale ledger; see section 6 of [`docs/design/collection-contract.md`](docs/design/collection-contract.md) for the rationale, the boundaries and the step order.
+- The three `manifest.json` and `manifest.json.sig` files must be persisted, but not on the main branch. A revision is read back from the previous manifest of the same layer; when it cannot be read back, the layer restarts at 1 and revision continuity across CI runs is lost. The manifests are therefore committed to an archive branch that shares no ancestry with the main branch, and no commit on the main branch carries a copy of them. The pipeline runs three steps in this order: read back, generate, write back. It first restores the previous manifest of each layer from `layer-manifests/` on the collection repository's own `ci-memory` branch, then generates the new manifests and signatures, then writes both new artifacts back to the matching paths under `ci-memory/layer-manifests/`. The archive branch is named `ci-memory` and groups flat folders by function; only `layer-manifests/` exists here. It is never published to Pages and is read and written by the pipeline only. A write-back failure aborts the release and fails the CI run instead of publishing on a stale ledger; see section 6 of [`docs/design/collection-contract.md`](docs/design/collection-contract.md) for the rationale, the boundaries and the step order.
 - Automation: a push to main or a manual `build-and-deploy` run installs dependencies, imports plugins from the manifest, resolves the root certificate, checks the chain of the end-entity signing certificate with `openssl verify`, signs with `EEC_SECRET_KEY` and builds `dist/`, runs a full verification on `dist/` and finally publishes to Pages.
-- The root certificate comes from one of two places: `secrets.ROOT_CA_PEM` (PEM text) wins, otherwise `vars.ROOT_CA_URL` is fetched from the `online-data` branch of `DeepSeek-Chat-Enhanced`.
+- The root certificate comes from one of two places: `secrets.ROOT_CA_PEM` (PEM text) wins, otherwise `vars.ROOT_CA_URL` is fetched from the `certs` branch of `DeepSeek-Chat-Enhanced`; the trust list is distributed through that repository's `trusted-manifest` branch. Both branches belong to the root CA repository, not to this one.
 - Signing keys come from secrets only. No private key is ever stored in the repository.
 - Distribution must allow cross-origin access, and must allow `omds-chat.github.io` at the very least.
+
+### Why the template repository does not publish
+
+This repository carries the contract; it is not a collection. It holds no EEC private key, no root certificate and no publishable `dist/`. Running a release the way a collection does would fail while resolving the root certificate or while signing, and would produce nothing usable. The workflow therefore guards every publication-related step with a repository check: `if: github.repository != 'omds-chat/awesome-dsc-plugin-set-template'`.
+
+| Step | Behaviour in the template repository | Guarded |
+|:---:|:---:|:---:|
+| Checkout, Setup pnpm, Setup Node.js, Install dependencies | Runs as usual | No |
+| Import plugins | Runs as usual; the script returns 0 when the source manifest is empty | No |
+| Resolve root CA | Skipped | Yes |
+| Verify EEC against root CA | Skipped | Yes |
+| Build distribution | Skipped | Yes |
+| Verify distribution | Skipped | Yes |
+| Configure Pages, Upload artifact | Skipped | Yes |
+| The `deploy` job (Deploy to GitHub Pages) | The whole job is skipped | Yes |
+
+- Skipping happens at step level rather than after a failure: a run in the template repository contains no action that needs the root certificate or the signing key, so it never fails for a missing secret.
+- The check compares the full repository name. Once the skeleton is copied into a new repository, `github.repository` is that new name, the condition holds automatically, and build, signing and publishing proceed without editing the workflow.
+- Renaming the organisation or the repository requires updating that literal, otherwise the template repository is treated as an ordinary collection and returns to a state where it always fails.
+- The template repository also creates no `ci-memory` and holds no ledger: its workflow has no manifest read-back or write-back step, because that step exists only in a collection's pipeline, so there is nothing to skip here.
+
+### Parallel branches
+
+The three-layer manifests carry revisions across builds, so they live on a parallel branch that shares no ancestry with `main`. The branch name and its internal layout follow the organisation spec `.github/docs/repo-spec/side-branches.md`; the three parallel branches split the work as follows:
+
+| Branch | Owning repository | Holds | In Pages | Readers |
+|:---:|:---:|:---:|:---:|:---:|
+| `ci-memory` | The consuming collection repository; the template does not create it | The three `manifest.json` and `manifest.json.sig` pairs mirrored under `layer-manifests/` along the distribution paths | No | The pipeline only |
+| `certs` | `DeepSeek-Chat-Enhanced` | The root certificate and publicly shareable certificates and public keys | Yes | The web client and collections at runtime |
+| `trusted-manifest` | `DeepSeek-Chat-Enhanced` | The trust list and the derived data its index needs | Yes | The web client and collections at startup |
+
+- The consuming repository creates `ci-memory` itself with `git checkout --orphan ci-memory`, puts a single `README.md` that states its responsibility in the first commit, and checks it out as an independent worktree under `single-branch/ci-memory/`; `.gitignore` already ignores that directory.
+- Inside the branch, flat folders are grouped by function and never nested further; only `layer-manifests/` exists here, mirroring each layer's manifest and signature along the distribution paths.
+- The skeleton's `template/manifest.json` is the "empty baseline before the first build": `revision` is 1, it covers the four root files only and carries no history across builds; it is not a copy of the ledger, and `pnpm build` regenerates it from the content at hand.
+- When a build cannot read that layer's manifest from `ci-memory`, revision counting starts at 1: the previous manifest in the working tree is the skeleton's empty baseline, so an unmodified copy keeps 1 and changed content moves to 2. The branch itself must already exist: a missing branch is a deployment error and the pipeline fails instead of creating it, and counting from 1 covers only a first build where the branch exists but `layer-manifests/` has no manifest for that layer yet. Once the ledger is in use, the main branch commits no further manifests.
+- `ci-memory` is never published to Pages and is read and written by the pipeline only: the collection repository's pipeline restores the previous manifest from it and writes the current one back to it, and no client reads anything from it.
+- The template repository does not create this branch and holds no ledger at all; it publishes the specification and the schemas only. When `ci-memory` is missing, the pipeline fails instead of creating it.
+- The root certificate and the trust list are not in `ci-memory`: they come from the `certs` and `trusted-manifest` branches of `DeepSeek-Chat-Enhanced`, not from a branch of this repository. The three names never stand in for one another and never share a branch.
 
 ## Security notes
 
