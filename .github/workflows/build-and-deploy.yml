@@ -95,7 +95,7 @@ jobs:
       - name: Build distribution
         if: github.repository != 'omds-chat/dsc-plugin-set-template'
         env:
-          EEC_SECRET_KEY: ${{ secrets.AWESOME_DSC_HUMANIZE_ASSET_EEC_SECRET }}
+          EEC_SECRET_KEY: ${{ secrets.EEC_SECRET_KEY }}
         run: node scripts/build-collection.mjs --dir . --root-ca "$ROOT_CA_PATH" --sign --out dist
 
       # 对即将分发的产物再做一次完整校验:证书链、CMS 签名、作者签名、清单与版本目录。
