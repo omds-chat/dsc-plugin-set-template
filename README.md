@@ -74,7 +74,7 @@ openssl req -new -key eec_secret.pem -out eec.csr -subj '/O=omds-chat/CN=<合集
 ```
 
 4. 把 `eec.csr` 交给根 CA(`DeepSeek-Chat-Enhanced` 仓库)签发,拿回证书后写到 `certs/<合集 id>/<合集 id>-eec.crt`。合集 id 依次取 `--collection-name`、分发目录 `build-info.json` 的 `collection` 字段、合集目录名,新建合集通常就是仓库目录名。骨架里的 `certs/template/` 与新的合集 id 不同名,复制后要改名为 `certs/<新合集 id>/`;文件夹里的 `_REPLACE_THIS_FILE_AS_YOUR_EEC_` 是占位文件而不是证书,必须把它换成 `certs/<新合集 id>/<新合集 id>-eec.crt` 并删除占位文件。占位文件只用来占位:签名与验签都拒绝它,详见[占位文件与测试流程](#占位文件与测试流程)。
-5. 把 `eec_secret.pem` 放进 CI secret `EEC_SECRET_KEY`;把根证书放进 `secrets.ROOT_CA_PEM`,或把根证书地址放进 `vars.ROOT_CA_URL`,该地址取 `DeepSeek-Chat-Enhanced` 的 `certs` 分支上的 `root_ca.crt`——这条分支属于根 CA 仓库,不是本仓库的分支。私钥不得入库。
+5. 把 `eec_secret.pem` 放进 CI secret `EEC_SECRET_KEY`;把根证书放进 `secrets.DS_CHAT_ROOT_CA`,或把根证书地址放进 `vars.ROOT_CA_URL`,该地址取 `DeepSeek-Chat-Enhanced` 的 `certs` 分支上的 `root_ca.crt`——这条分支属于根 CA 仓库,不是本仓库的分支。私钥不得入库。
 6. 编辑 `meta.json`:默认关闭下载计数。若要启用,把 `DOWNLOAD_COUNT_ENABLE` 置为 `true`,并同时给出 `DOWNLOAD_COUNT_API` 与 `API_NEED_IP`。
 7. 在 `plugins/` 下建立作者目录与插件目录,命名规则与必需文件见 `template/plugins/README.md`;在插件目录索引 `plugins.json` 登记插件,在 `tags.json` 声明预设标签,在 `plugins/author_manifest.json` 登记作者。
 8. 在 `.github/plugins-sources.json` 中登记插件来源,运行 `pnpm import` 收录插件,再运行 `pnpm verify` 确认自洽,最后运行 `pnpm build` 生成 `dist/`。
@@ -306,7 +306,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 - 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 先补齐三层清单,再校验,最后把分发内容写入 `dist/`;带 `--sign` 时用 `EEC_SECRET_KEY` 为三层清单与每个版本的 `plugin.js` 生成签名。
 - 三层 `manifest.json` 与 `manifest.json.sig` 必须持久化,但落点不是主分支。revision 从该层上一份清单读出,读不回来就只能从 1 重新开始,跨 CI 的 revision 沿用随之失效;所以清单提交进与主分支无公共祖先的归档分支,主分支的提交里不留同一层的清单副本。流水线按「读回、生成、写回」三步走:先从合集仓库自己的 `ci-memory` 分支的 `layer-manifests/` 读回该层上一版清单,再生成新的清单与签名,最后把这两份新产物写回 `ci-memory/layer-manifests/` 的对应路径。归档分支按组织规范命名为 `ci-memory`,内部按功用分扁平文件夹,本场景只有 `layer-manifests/`;它不发布到 Pages,只给流水线读写。写回失败即中止本次发布并让 CI 报错,不带着旧账本继续发;取舍、边界与三步顺序见 [`docs/design/collection-contract.md`](docs/design/collection-contract.md) 第 6 节。
 - 自动化:推送到 main 或手动触发 `build-and-deploy`,依次安装依赖、按清单收录插件、解析根证书、用 `openssl verify` 校验终端签名证书的证书链、用 `EEC_SECRET_KEY` 签名并构建 `dist/`、对 `dist/` 再跑一次完整校验,最后发布到 Pages。
-- 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 `DeepSeek-Chat-Enhanced` 的 `certs` 分支拉取;信任清单由该仓库的 `trusted-manifest` 分支分发。两条分支都属于根 CA 仓库,不是本仓库的分支。
+- 根证书来源二选一:`secrets.DS_CHAT_ROOT_CA`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 `DeepSeek-Chat-Enhanced` 的 `certs` 分支拉取;信任清单由该仓库的 `trusted-manifest` 分支分发。两条分支都属于根 CA 仓库,不是本仓库的分支。
 - 签名私钥只从 secrets 读取,仓库内不存放任何私钥。
 - 分发必须开启跨域访问,至少放行 `omds-chat.github.io`。
 

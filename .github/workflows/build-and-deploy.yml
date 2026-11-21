@@ -51,25 +51,25 @@ jobs:
       # 以下到「Verify distribution」的步骤是发布相关步骤:要读根证书、要用 EEC 私钥签名,
       # 模板仓库都没有,所以逐个加 if 跳过;非模板仓库照常执行。
       # 根证书二选一,优先级从高到低:
-      #   1. secrets.ROOT_CA_PEM  根证书 PEM 文本,适合不便公开拉取的场景;
+      #   1. secrets.DS_CHAT_ROOT_CA  根证书 PEM 文本,适合不便公开拉取的场景;
       #   2. vars.ROOT_CA_URL     根证书下载地址,默认取 DeepSeek-Chat-Enhanced 的 certs 分支的 root_ca.crt
       #                           (该分支属于根 CA 仓库,不是本仓库的分支)。
       - name: Resolve root CA
         if: github.repository != 'omds-chat/dsc-plugin-set-template'
         env:
-          ROOT_CA_PEM: ${{ secrets.ROOT_CA_PEM }}
+          ROOT_CA_PEM: ${{ secrets.DS_CHAT_ROOT_CA }}
           ROOT_CA_URL: ${{ vars.ROOT_CA_URL }}
         run: |
           set -euo pipefail
           target="$RUNNER_TEMP/root_ca.crt"
           if [ -n "${ROOT_CA_PEM:-}" ]; then
             printf '%s\n' "$ROOT_CA_PEM" > "$target"
-            echo "根证书来源:secrets.ROOT_CA_PEM"
+            echo "根证书来源:secrets.DS_CHAT_ROOT_CA"
           elif [ -n "${ROOT_CA_URL:-}" ]; then
             curl -fsSL "$ROOT_CA_URL" -o "$target"
             echo "根证书来源:$ROOT_CA_URL"
           else
-            echo "缺少根证书:请设置 secrets.ROOT_CA_PEM 或 vars.ROOT_CA_URL" >&2
+            echo "缺少根证书:请设置 secrets.DS_CHAT_ROOT_CA 或 vars.ROOT_CA_URL" >&2
             exit 1
           fi
           echo "ROOT_CA_PATH=$target" >> "$GITHUB_ENV"
@@ -95,7 +95,7 @@ jobs:
       - name: Build distribution
         if: github.repository != 'omds-chat/dsc-plugin-set-template'
         env:
-          EEC_SECRET_KEY: ${{ secrets.EEC_SECRET_KEY }}
+          EEC_SECRET_KEY: ${{ secrets.AWESOME_DSC_HUMANIZE_ASSET_EEC_SECRET }}
         run: node scripts/build-collection.mjs --dir . --root-ca "$ROOT_CA_PATH" --sign --out dist
 
       # 对即将分发的产物再做一次完整校验:证书链、CMS 签名、作者签名、清单与版本目录。
