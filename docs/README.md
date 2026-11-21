@@ -8,7 +8,7 @@
 |:---:|:---:|:---:|:---:|:---:|
 | [README.md](../README.md) | 合集模板的中文主入口:把一个合集从零做到可分发的全流程 | 目录结构、创建步骤、证书与签名命令、校验规则、签名工具接口、部署流程、安全提示 | 要新建合集、要签一次名,或要弄清某条校验为什么失败时 | 用户、贡献者、Agent |
 | [README.en-US.md](../README.en-US.md) | 主 README 的英文版,与中文版逐节对应 | 与中文版相同的章节 | 读者使用英文,或要把同一套说明交给英文读者时 | 用户、贡献者 |
-| [docs/README.md](index.md) | 本索引:全部文档的职责、优先级、分层与维护约定 | 文档主表、冲突裁决顺序、文档分层、维护约定 | 第一次接触本仓库,或不确定该读哪份文档时 | Agent、用户、贡献者、维护者 |
+| [docs/README.md](README.md) | 本索引:全部文档的职责、优先级、分层与维护约定 | 文档主表、冲突裁决顺序、文档分层、维护约定 | 第一次接触本仓库,或不确定该读哪份文档时 | Agent、用户、贡献者、维护者 |
 | [docs/design/collection-contract.md](design/collection-contract.md) | 设计文档:骨架、合集 id、证书解析、构建与校验分工、清单持久化的取舍与边界 | 各章节的已定边界、代价与已排除项,以及尚未定稿的条目 | 要判断"为什么这样定"、要改脚本语义,或要决定某条边界能不能越时 | 维护者、Agent |
 | [schemas/README.md](../schemas/README.md) | Schema 索引:每份 JSON 由哪个脚本生成、由哪条规则校验 | Schema 与 JSON 的对照表、脚本与 Schema 的同步规则、Schema 表达不了的约束、命名与引用约定 | 要新增或修改 JSON 字段、要让 Schema 与脚本同步,或要查某条正则写在哪里时 | 维护者、贡献者、Agent |
 | [template/plugins/README.md](../template/plugins/README.md) | 骨架里 plugins/ 目录的三层布局与每层必需文件 | 作者目录、插件目录、版本目录的命名与必需文件,三层清单的覆盖范围,证书解析顺序与占位文件替换步骤 | 要往合集里加作者、加插件、加版本,或要确认某个文件该放哪一层时 | 贡献者、Agent、用户 |
@@ -36,7 +36,7 @@
 |:---:|:---:|:---:|:---:|
 | 对外文档 | [README.md](../README.md)、[README.en-US.md](../README.en-US.md) | 用户、贡献者 | 从零建一个合集时按步骤照做;这里只给做法,不给取舍论证 |
 | 维护者文档 | [设计文档](design/collection-contract.md)、[schemas/README.md](../schemas/README.md) | 维护者、Agent | 改语义、改 Schema、判定边界前必读;前者讲为什么,后者给逐条对照 |
-| 给 Agent 的执行文档 | [本索引](index.md)、[template/plugins/README.md](../template/plugins/README.md) | Agent | 本索引先定位该读哪份;插件目录说明给出建目录、放文件、查必需文件的确定动作 |
+| 给 Agent 的执行文档 | [本索引](README.md)、[template/plugins/README.md](../template/plugins/README.md) | Agent | 本索引先定位该读哪份;插件目录说明给出建目录、放文件、查必需文件的确定动作 |
 
 三类文档的关系是:对外文档复述做法,维护者文档解释做法,执行文档把做法拆成可逐条执行的动作。同一条规则在两处出现却不一致时,按第 2 节的顺序裁决,不要在两处各留一种说法。
 

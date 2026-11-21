@@ -303,7 +303,7 @@ openssl pkeyutl -verify -pubin -inkey author_pub.pem -rawin -in plugin.js -sigfi
 ## 校验与部署流程
 
 - 本地:`pnpm install` 之后运行 `pnpm verify`。`pnpm build` 先补齐三层清单,再校验,最后把分发内容写入 `dist/`;带 `--sign` 时用 `EEC_SECRET_KEY` 为三层清单与每个版本的 `plugin.js` 生成签名。
-- 三层 `manifest.json` 与 `manifest.json.sig` 必须持久化,但落点不是主分支。revision 从该层上一份清单读出,读不回来就只能从 1 重新开始,跨 CI 的 revision 沿用随之失效;所以清单提交进与主分支无公共祖先的归档分支,主分支的提交里不留同一层的清单副本。流水线按「读回、生成、写回」三步走:先从归档分支读回该层上一版清单,再生成新的清单与签名,最后把这两份新产物写回归档分支。归档分支名与写回失败时的处理方式另行约定;取舍、边界与三步顺序见 [`docs/design/collection-contract.md`](docs/design/collection-contract.md) 第 6 节。
+- 三层 `manifest.json` 与 `manifest.json.sig` 必须持久化,但落点不是主分支。revision 从该层上一份清单读出,读不回来就只能从 1 重新开始,跨 CI 的 revision 沿用随之失效;所以清单提交进与主分支无公共祖先的归档分支,主分支的提交里不留同一层的清单副本。流水线按「读回、生成、写回」三步走:先从归档分支读回该层上一版清单,再生成新的清单与签名,最后把这两份新产物写回归档分支。归档分支名为 `online-data`,写回失败时的处理方式待定;取舍、边界与三步顺序见 [`docs/design/collection-contract.md`](docs/design/collection-contract.md) 第 6 节。
 - 自动化:推送到 main 或手动触发 `build-and-deploy`,依次安装依赖、按清单收录插件、解析根证书、用 `openssl verify` 校验终端签名证书的证书链、用 `EEC_SECRET_KEY` 签名并构建 `dist/`、对 `dist/` 再跑一次完整校验,最后发布到 Pages。
 - 根证书来源二选一:`secrets.ROOT_CA_PEM`(PEM 文本)优先,否则用 `vars.ROOT_CA_URL` 从 online-data 分支拉取。
 - 签名私钥只从 secrets 读取,仓库内不存放任何私钥。
