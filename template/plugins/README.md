@@ -2,6 +2,8 @@
 
 本目录存放合集收录的全部插件,按「作者 / 插件 / 版本」三层组织。每层一份 `manifest.json` 与一份 `manifest.json.sig`:清单记录本层文件的 SHA-512,签名由根 CA 签发的终端签名证书(EEC)生成。产物本体另有每版本的 `plugin.js.sig`,作者可选地用自有密钥追加一份裸公钥分离签名。
 
+**本文是插件树布局的权威出处**:作者、插件、版本三层目录的命名、每层必需文件、清单覆盖范围与空基线约定,都以本文为准。使用同一布局的其他仓库(awesome 系插件合集、内部插件索引)对布局的说明只写自己相对本文的增量,并指回本文;增量与本文冲突时以本文为准。本仓作为合集契约的所有者,在此维护跨合集通用的全集;各仓库私有的条目(收录流程、签名执行者、站点签名等)由各仓自己的文档承载。怎么动手建目录与收录见[操作手册](../../docs/user/collection-guide.md),取舍与边界见[设计文档](../../docs/design/collection-contract.md)。
+
 ## 作者目录
 
 `plugins/<author>/`
@@ -14,6 +16,18 @@
 |:---:|:---:|:---:|
 | `plugin_manifest.json` | 是 | 该作者的插件名数组,例如 `["dsc-demo"]` |
 | `author_pub.pem` | 否 | 作者公钥,OpenSSL PEM,Ed25519。版本目录出现 `<文件>.author.sig` 时必须存在 |
+
+同一位作者可以有多个签名者,这是布局允许的可选扩展,签名文件与公钥按序号配对:
+
+| 签名者序号 | 版本目录内的签名 | 作者目录内的公钥 |
+|:---:|:---:|:---:|
+| 1 | `plugin.js.author.sig` | `author_pub.pem` |
+| 2 | `plugin.js.author.sig.2` | `author_pub.2.pem` |
+| n | `plugin.js.author.sig.<n>` | `author_pub.<n>.pem` |
+
+- 序号 1 沿用单签文件名,单个签名者的目录结构与历史产物完全兼容;序号从 2 起必须是十进制、不带前导零,序号不必连续,撤签时删除自己的签名与公钥即可。
+- 签名文件与对应序号的公钥两份缺一不可:只有一侧判为未校验,不算通过。多位签名者逐位校验,任一失败只记警告、不阻断发布。
+- 序号而不是签名者姓名做键,是因为签名者姓名没有组织级注册表;序号只依赖同一目录内相邻的两个文件,校验方不需要额外映射表,扩容时只追加一对文件。
 | `manifest.json` | 是 | L2 清单,覆盖本目录的 `author_pub.pem` 与 `plugin_manifest.json`;由构建生成,持久化在合集仓库自己的 `ci-memory` 分支的 `layer-manifests/` 下,不提交进主分支 |
 | `manifest.json.sig` | 是 | L2 清单的 CMS 分离签名,由 EEC 生成 |
 
@@ -33,7 +47,8 @@
 ```
 
 - `latest` 必须出现在 `versions` 内;`versions` 按版本号降序排列且不得重复。
-- 目录内另有 `manifest.json` 与 `manifest.json.sig`,即 L3 清单,覆盖 `versions.json` 与每个版本的 `meta.json`。L3 不覆盖 `plugin.js` 与 `plugin.js.sig`,产物本体由每版本的 `plugin.js.sig` 独立签名。L3 与 L1、L2 一样落在 `ci-memory` 的 `layer-manifests/` 下,不提交进主分支。
+- 目录内另有 `manifest.json` 与 `manifest.json.sig`,即 L3 清单,覆盖 `versions.json` 与每个版本的 `meta.json`。L3 不覆盖 `plugin.js` 与 `plugin.js.sig`,产物本体由每版本的 `plugin.js.sig` 独立签名。L3 与 L1、L2 一样落在并行分支(现行名 `ci-memory`)的 `layer-manifests/` 下,不提交进主分支。
+- 收录契约还要求产物静态扫描:插件不得自建网络通道,每个版本的 `plugin.js` 不得出现全局 `fetch(`、`XMLHttpRequest(`、`WebSocket(`、`EventSource(`、`navigator.sendBeacon(` 或带远程地址的 `import(`。扫描只认全局对象上的直接调用,由收录插件的使用方合集在收录与校验环节执行,命中报 `PLUGIN_NETWORK_SELFTALK` 警告:收录照常、校验退出码仍为 0,是否收录由维护者复核判断。这是收录契约,不是沙箱:它拦的是自建网络通道,不承诺运行时隔离。
 
 ## 版本目录
 
@@ -80,11 +95,11 @@ plugins/
 
 占位文件在合集骨架里叫 `certs/template/_REPLACE_THIS_FILE_AS_YOUR_EEC_`,替换步骤是:把 `certs/template/` 改名为 `certs/<合集 id>/`,从组织离线密钥库取出该合集的终端签名证书放到 `certs/<合集 id>/<合集 id>-eec.crt`,再删除占位文件。真实证书就位而占位文件仍在时,`pnpm verify` 报 `EEC_PLACEHOLDER_LEFT` 提醒删除,因为 `pnpm build` 会把整个 `certs/` 复制进 `dist/`,残留的占位文件会一起被分发。
 
-不要在本仓库里试跑替换:把仓库复制到仓库内被忽略的 `temp/test-eec/` 作为临时测试仓库,在副本里替换占位文件、改合集 id 并跑校验,原仓库不受影响,完整流程见根目录 `README.md` 的「占位文件与测试流程」。
+不要在本仓库里试跑替换:把仓库复制到本地被 `.gitignore` 忽略的目录(例如 `temp/test-eec/`)作为临时测试仓库,在副本里替换占位文件、改合集 id 并跑校验,原仓库不受影响,完整流程见[操作手册第 2 节](../../docs/user/collection-guide.md)。
 
-## 清单空基线与 ci-memory
+## 清单空基线与并行分支
 
-骨架只带一份清单空基线,不带账本:三层清单要跨构建延续 revision,真实合集的清单放在合集仓库自己的并行分支 `ci-memory` 里。
+骨架只带一份清单空基线,不带账本:三层清单要跨构建延续 revision,真实合集的清单放在合集仓库自己的归档并行分支里。并行分支的名字与内部布局以组织规范 `.github/docs/repo-spec/side-branches.md`(位于工作区根仓库,不在本仓库)为准,现行定名为 `ci-memory`;信任材料不在其中,它们来自根 CA 仓库 `DeepSeek-Chat-Enhanced` 的 `certs` 与 `trusted-manifest` 分支,三个名字互不代管。
 
 | 位置 | 内容 | 说明 |
 |:---:|:---:|:---:|

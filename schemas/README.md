@@ -15,7 +15,7 @@
 | `versions.schema.json` | `versions.json` | `plugins/<作者>/<插件>/` | `scripts/import-plugins.mjs` 的 `planVersions` | 校验规则 3;`inspectPlugin`,错误码 `VERSIONS_INVALID`、`LATEST_NOT_LISTED`;`readVersionList` 负责读出版本目录清单 |
 | `runtime/meta.json` | `meta.json` | `plugins/<作者>/<插件>/<版本>/` | `scripts/import-plugins.mjs` 从插件构建产物 `dist/meta.json` 复制 | 字段级约束由插件运行时校验,本仓库脚本只比对 `name` 与 `version` 是否同插件目录索引 `plugins.json`、目录名一致(`inspectVersionMeta`,错误码 `PLUGIN_META_MISMATCH`) |
 
-"校验规则 N" 指 [主 README 的校验规则表](../README.md#校验规则) 中编号为 N 的那一条。
+"校验规则 N" 指 [合集操作手册](../docs/user/collection-guide.md) 第 4.2 节校验规则表中编号为 N 的那一条。插件名与作者名的正则同时是插件树布局契约的一部分,布局条文的权威出处是 [`template/plugins/README.md`](../template/plugins/README.md),使用同一布局的其他仓库按该文与本目录同步正则。
 
 ## Schema 与脚本校验的关系
 

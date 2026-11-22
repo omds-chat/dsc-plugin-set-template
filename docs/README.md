@@ -6,12 +6,13 @@
 
 | 文档 | 职责一句话 | 主要内容 | 什么时候需要读 | 主要读者 |
 |:---:|:---:|:---:|:---:|:---:|
-| [README.md](../README.md) | 合集模板的中文主入口:把一个合集从零做到可分发的全流程 | 目录结构、创建步骤、证书与签名命令、校验规则、签名工具接口、部署流程、模板仓库为何不发布、安全提示 | 要新建合集、要签一次名,或要弄清某条校验为什么失败时 | 用户、贡献者、Agent |
+| [README.md](../README.md) | 合集模板的中文门面:这是什么、能拿到什么、文档导航、目录结构、许可 | 简介、能力表、文档导航、目录结构、最小可用步骤、许可 | 第一次了解本仓库,或要找该读哪份文档时 | 用户、贡献者、Agent |
 | [README.en-US.md](../README.en-US.md) | 主 README 的英文版,与中文版逐节对应 | 与中文版相同的章节 | 读者使用英文,或要把同一套说明交给英文读者时 | 用户、贡献者 |
-| [docs/README.md](README.md) | 本索引:全部文档的职责、优先级、分层与维护约定 | 文档主表、冲突裁决顺序、文档分层、维护约定 | 第一次接触本仓库,或不确定该读哪份文档时 | Agent、用户、贡献者、维护者 |
-| [docs/design/collection-contract.md](design/collection-contract.md) | 设计文档:骨架(含清单空基线)、合集 id、证书解析、构建与校验分工、清单持久化与并行分支 `ci-memory` 的取舍与边界 | 各章节的已定边界、代价与已排除项,并行分支 `ci-memory` 与 `certs`、`trusted-manifest` 的分工,以及尚未定稿的条目 | 要判断"为什么这样定"、要改脚本语义,或要决定某条边界能不能越时 | 维护者、Agent |
+| [docs/user/collection-guide.md](user/collection-guide.md) | 合集操作手册(中文):从零建到一个可分发的合集的全部步骤与命令 | 创建步骤、占位文件与临时试跑、签名与证书链、签名与校验规则、签名工具接口、校验与部署、模板仓库为何不发布、安全提示 | 要新建合集、要签一次名,或要弄清某条校验为什么失败时 | 用户、贡献者、Agent |
+| [docs/user/collection-guide.en-US.md](user/collection-guide.en-US.md) | 操作手册的英文版,与中文版逐节对应 | 与中文版相同的章节 | 读者使用英文时 | 用户、贡献者 |
+| [docs/design/collection-contract.md](design/collection-contract.md) | 设计文档:骨架(含清单空基线)、合集 id、证书解析、构建与校验分工、三层清单不收束、清单持久化与并行分支的取舍与边界 | 各章节的已定边界、代价与已排除项,并行分支 `ci-memory` 与 `certs`、`trusted-manifest` 的分工,以及尚未定稿的条目 | 要判断"为什么这样定"、要改脚本语义,或要决定某条边界能不能越时 | 维护者、Agent |
 | [schemas/README.md](../schemas/README.md) | Schema 索引:每份 JSON 由哪个脚本生成、由哪条规则校验 | Schema 与 JSON 的对照表、脚本与 Schema 的同步规则、Schema 表达不了的约束、命名与引用约定 | 要新增或修改 JSON 字段、要让 Schema 与脚本同步,或要查某条正则写在哪里时 | 维护者、贡献者、Agent |
-| [template/plugins/README.md](../template/plugins/README.md) | 骨架里 plugins/ 目录的三层布局、每层必需文件与清单空基线 | 作者目录、插件目录、版本目录的命名与必需文件,三层清单的覆盖范围与持久化落点,骨架的清单空基线与 `ci-memory` 约定,证书解析顺序与占位文件替换步骤 | 要往合集里加作者、加插件、加版本,或要确认某个文件该放哪一层时 | 贡献者、Agent、用户 |
+| [template/plugins/README.md](../template/plugins/README.md) | 插件树布局的权威出处:作者 / 插件 / 版本三层目录、每层必需文件与清单空基线 | 作者目录、插件目录、版本目录的命名与必需文件,作者多签命名扩展、产物静态扫描要求,三层清单的覆盖范围与持久化落点,证书解析顺序与占位文件替换步骤 | 要往合集里加作者、加插件、加版本,或要确认某个文件该放哪一层时 | 贡献者、Agent、用户 |
 
 法律文件 `LICENSE` 与 `COPYRIGHT` 不属于文档,不在本索引范围内。
 
@@ -23,27 +24,30 @@
 |:---:|:---:|:---:|
 | 1 | `scripts/` 的实际行为 | 最高权威。文档与 Schema 跟它不一致时改两边,不改它去迁就文档 |
 | 2 | `schemas/` 的书面契约 | 与脚本不一致时以脚本为准,并当轮修 Schema;Schema 表达不了的约束只由脚本保证 |
-| 3 | [设计文档](design/collection-contract.md) | 已定边界与取舍的出处。README 与它不一致时按它改 README |
-| 4 | [README.md](../README.md) 与 [README.en-US.md](../README.en-US.md) | 步骤与命令的依据;两份语言版本之间以中文版为准,英文版随之同步 |
-| 5 | [template/plugins/README.md](../template/plugins/README.md) | 骨架内的局部说明;与根 README 或设计文档不一致时以后两者为准 |
-| 6 | 本索引 | 只指路,不承载规则;与任何正文不一致时以正文为准,并在当轮改本索引 |
+| 3 | [设计文档](design/collection-contract.md) | 已定边界与取舍的出处。操作手册与它不一致时按它改操作手册 |
+| 4 | [操作手册](user/collection-guide.md) 与 [英文版](user/collection-guide.en-US.md) | 步骤、命令与校验规则条文的依据;两份语言版本之间以中文版为准,英文版随之同步 |
+| 5 | [template/plugins/README.md](../template/plugins/README.md) | 插件树布局条文的权威出处,其他仓库的布局说明只写增量并指回本文;与设计文档或操作手册冲突时按后两者改它 |
+| 6 | 两份主 README | 只承载门面,不承载做法条文;与上面任何一级不一致时以更高一级为准 |
+| 7 | 本索引 | 只指路,不承载规则;与任何正文不一致时以正文为准,并在当轮改本索引 |
 
-链条是"脚本 > Schema > 设计文档 > README > 骨架内说明",本索引不在链条上。冲突的处理动作是改文档与 Schema,不是改脚本去迁就文档;这条顺序同样写在设计文档第 1 节,两处表述不一致时以设计文档为准。
+链条是"脚本 > Schema > 设计文档 > 操作手册 > 插件树布局 > 门面 README > 本索引",本索引不在链条上。冲突的处理动作是改文档与 Schema,不是改脚本去迁就文档;这条顺序同样写在设计文档第 1 节,两处表述不一致时以设计文档为准。
 
 ## 3. 文档分层
 
 | 层 | 文档 | 面向谁 | 读法 |
 |:---:|:---:|:---:|:---:|
-| 对外文档 | [README.md](../README.md)、[README.en-US.md](../README.en-US.md) | 用户、贡献者 | 从零建一个合集时按步骤照做;这里只给做法,不给取舍论证 |
+| 门面文档 | [README.md](../README.md)、[README.en-US.md](../README.en-US.md) | 用户、贡献者 | 判断这是什么、能拿到什么、该读哪份;只给导览,不给做法与条文 |
+| 用户文档 | [操作手册](user/collection-guide.md)、[英文版](user/collection-guide.en-US.md) | 用户、贡献者、Agent | 动手做合集时按步骤照做;只给做法,不给取舍论证 |
 | 维护者文档 | [设计文档](design/collection-contract.md)、[schemas/README.md](../schemas/README.md) | 维护者、Agent | 改语义、改 Schema、判定边界前必读;前者讲为什么,后者给逐条对照 |
-| 给 Agent 的执行文档 | [本索引](README.md)、[template/plugins/README.md](../template/plugins/README.md) | Agent | 本索引先定位该读哪份;插件目录说明给出建目录、放文件、查必需文件的确定动作 |
+| 布局与执行文档 | [template/plugins/README.md](../template/plugins/README.md)、[本索引](README.md) | 贡献者、Agent | 插件树布局说明给出建目录、放文件、查必需文件的确定动作;本索引先定位该读哪份 |
 
-三类文档的关系是:对外文档复述做法,维护者文档解释做法,执行文档把做法拆成可逐条执行的动作。同一条规则在两处出现却不一致时,按第 2 节的顺序裁决,不要在两处各留一种说法。
+四类文档的关系是:门面文档导览,用户文档复述做法,维护者文档解释做法,布局与执行文档把做法拆成可逐条执行的动作。同一条规则在两处出现却不一致时,按第 2 节的顺序裁决,不要在两处各留一种说法。
 
 ## 4. 维护约定
 
 - 新增或删除文档时,当轮更新第 1 节主表:一行一份文档,职责一句话,不复述正文。改名或移动文档时,同时改本索引与所有入链。
-- 机制变更当轮更新对应文档,不留到下一轮:改校验规则要同改 [schemas/README.md](../schemas/README.md) 的对照表与根 README 的校验规则表;改骨架布局要同改 [template/plugins/README.md](../template/plugins/README.md) 与设计文档第 2 节;改清单持久化要同改设计文档第 6 节与本索引里的职责句;并行分支的名字与内部文件夹以组织规范 `.github/docs/repo-spec/side-branches.md` 为准,改分支名时同改设计文档第 2 节与第 6 节、两份 README、[template/plugins/README.md](../template/plugins/README.md) 与本索引,不留旧名作别名。
-- 设计文档第 8 节的未定稿条目定下来之后,把结论写进对应正文并从第 8 节删掉该条,同时把结论落到 README 与 Schema 里;未定稿只记未定的事,不记决定过程。
+- 机制变更当轮更新对应文档,不留到下一轮:改校验规则要同改 [schemas/README.md](../schemas/README.md) 的对照表与操作手册的校验规则表;改骨架布局要同改 [template/plugins/README.md](../template/plugins/README.md) 与设计文档第 2 节;改清单持久化要同改设计文档第 6 节与操作手册第 6 节;并行分支的名字与内部文件夹以组织规范 `.github/docs/repo-spec/side-branches.md`(位于工作区根仓库,不在本仓库)为准,改分支名时同改设计文档第 2 节与第 6 节、操作手册、[template/plugins/README.md](../template/plugins/README.md)、[schemas/README.md](../schemas/README.md) 与本索引,不留旧名作别名。
+- 本仓是插件树布局条文的权威出处:改布局条文时,当轮检查 [`template/plugins/README.md`](../template/plugins/README.md) 文首的权威声明是否仍然成立,并提示使用同一布局的其他仓库(awesome 系合集、内部插件索引)同步它们只写增量的说明。
+- 设计文档第 8 节的未定稿条目定下来之后,把结论写进对应正文并从第 8 节删掉该条,同时把结论落到操作手册与 Schema 里;未定稿只记未定的事,不记决定过程。
 - 本索引只描述文档的职责与位置,不写时间戳、不写进度、不复制正文;正文改动导致某行职责句不再成立时,当轮改本索引。
 - 新增文档前先判断它属于第 3 节的哪一层;归不进任何一层的临时说明不新建文档,写进已有文档的对应小节。
